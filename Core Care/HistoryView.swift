@@ -74,11 +74,7 @@ struct AppColors {
     static let heroGradient = LinearGradient.appHero
 
     static var cardGradient: LinearGradient {
-        LinearGradient(
-            gradient: Gradient(colors: [Color.cardBackground, Color.appBackground2]),
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        LinearGradient.glossyCardSurface
     }
 }
 
@@ -94,19 +90,20 @@ struct HistoryView: View {
     @State private var currentPage: HomePageSection = .history
     @State private var showDetailedReport = false
     @State private var showExportSheet = false
-    @State private var isLoading = true
+    @State private var isLoading = false
+    @State private var hasLoadedOnce = false
     @State private var showError: Bool = false
     @State private var errorMessage: String = ""
     @State private var scrollOffset: CGFloat = 0
     
-    // Premium animation states
-    @State private var headerAnimated = false
-    @State private var riskCardAnimated = false
-    @State private var reportButtonAnimated = false
-    @State private var timeFrameAnimated = false
-    @State private var contentAnimated = false
-    @State private var metricsAnimated = false
-    @State private var chartsAnimated = false
+    // Premium animation states - initialized to true for instant presentation without loading delays
+    @State private var headerAnimated = true
+    @State private var riskCardAnimated = true
+    @State private var reportButtonAnimated = true
+    @State private var timeFrameAnimated = true
+    @State private var contentAnimated = true
+    @State private var metricsAnimated = true
+    @State private var chartsAnimated = true
     
     private var currentUserId: Int {
         let managerId = userManager.currentUserId
@@ -145,7 +142,7 @@ struct HistoryView: View {
                 
                 contentView(geo: geo)
                 
-                if isLoading {
+                if isLoading && weeklyData.isEmpty && dailyReadings.isEmpty {
                     PremiumLoadingOverlay()
                 }
             }
@@ -156,8 +153,13 @@ struct HistoryView: View {
         .navigationBarBackButtonHidden(true)
         .onAppear {
             validateUserSession()
-            fetchReport()
             triggerAnimations()
+            if !hasLoadedOnce {
+                hasLoadedOnce = true
+                fetchReport(showLoader: false)
+            } else {
+                fetchReport(showLoader: false)
+            }
         }
         .alert("Error", isPresented: $showError) {
             Button("OK", role: .cancel) {}
@@ -172,29 +174,13 @@ struct HistoryView: View {
     }
     
     private func triggerAnimations() {
-        let animationDelays: [Double] = [0.1, 0.3, 0.5, 0.7, 0.9, 1.1, 1.3]
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + animationDelays[0]) {
-            withAnimation(.spring(response: 0.8, dampingFraction: 0.7)) { headerAnimated = true }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + animationDelays[1]) {
-            withAnimation(.spring(response: 0.8, dampingFraction: 0.7)) { riskCardAnimated = true }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + animationDelays[2]) {
-            withAnimation(.spring(response: 0.8, dampingFraction: 0.7)) { reportButtonAnimated = true }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + animationDelays[3]) {
-            withAnimation(.spring(response: 0.8, dampingFraction: 0.7)) { timeFrameAnimated = true }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + animationDelays[4]) {
-            withAnimation(.spring(response: 0.8, dampingFraction: 0.7)) { contentAnimated = true }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + animationDelays[5]) {
-            withAnimation(.spring(response: 0.8, dampingFraction: 0.7)) { metricsAnimated = true }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + animationDelays[6]) {
-            withAnimation(.spring(response: 0.8, dampingFraction: 0.7)) { chartsAnimated = true }
-        }
+        headerAnimated = true
+        riskCardAnimated = true
+        reportButtonAnimated = true
+        timeFrameAnimated = true
+        contentAnimated = true
+        metricsAnimated = true
+        chartsAnimated = true
     }
     
     private func validateUserSession() {
@@ -287,9 +273,9 @@ struct HistoryView: View {
         VStack(spacing: 0) {
             premiumHeaderView(geo: geo)
             
-            if isLoading {
+            if isLoading && weeklyData.isEmpty && dailyReadings.isEmpty {
                 LoadingContentView()
-            } else if weeklyData.isEmpty && dailyReadings.isEmpty {
+            } else if weeklyData.isEmpty && dailyReadings.isEmpty && !isLoading {
                 ScrollView(.vertical, showsIndicators: false) {
                     PremiumEmptyStateView(geo: geo)
                         .frame(minHeight: geo.size.height - 200)
@@ -380,17 +366,16 @@ struct HistoryView: View {
         
         return VStack(spacing: 0) {
             HStack {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Health Dashboard")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.system(size: 16, weight: .regular))
                         .foregroundColor(AppColors.textSecondary)
                         .opacity(headerOpacity)
                     
                     Text("Cardiac Analytics")
-                        .font(.system(size: 32, weight: .bold))
+                        .font(.system(size: 24, weight: .bold))
                         .foregroundColor(AppColors.textPrimary)
-                        .tracking(-1.0)
-                        .scaleEffect(0.9 + (headerOpacity * 0.1))
+                        .scaleEffect(0.9 + (headerOpacity * 0.1), anchor: .leading)
                 }
                 
                 Spacer()
@@ -406,18 +391,19 @@ struct HistoryView: View {
                             .fill(
                                 LinearGradient(
                                     gradient: Gradient(colors: [
-                                        AppColors.accentColor.opacity(0.1),
-                                        AppColors.accentColor.opacity(0.05)
+                                        AppColors.accentColor.opacity(0.12),
+                                        AppColors.accentColor.opacity(0.06)
                                     ]),
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 )
                             )
-                            .frame(width: 52, height: 52)
+                            .frame(width: 50, height: 50)
+                            .shadow(color: AppColors.accentColor.opacity(0.15), radius: 6, x: 0, y: 3)
                         
                         Circle()
-                            .stroke(AppColors.accentColor.opacity(0.2), lineWidth: 1)
-                            .frame(width: 52, height: 52)
+                            .stroke(AppColors.accentColor.opacity(0.25), lineWidth: 1)
+                            .frame(width: 50, height: 50)
                         
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 20, weight: .medium))
@@ -427,9 +413,9 @@ struct HistoryView: View {
                 .buttonStyle(PremiumButtonStyle())
                 .scaleEffect(headerOpacity)
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, 20)
             .padding(.top, max(geo.safeAreaInsets.top, 44) + 8)
-            .padding(.bottom, 16)
+            .padding(.bottom, 20)
             
             // Divider with Gradient
             LinearGradient(
@@ -442,17 +428,12 @@ struct HistoryView: View {
                 endPoint: .trailing
             )
             .frame(height: 1)
+            .padding(.horizontal, 20)
         }
         .background(
-            ZStack {
-                AppColors.surfaceColor.opacity(0.95)
-                
-                if scrollOffset < -50 {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.8)
-                }
-            }
+            AppColors.secondaryColor
+                .opacity(scrollOffset < -50 ? 0.95 : 1.0)
+                .blur(radius: scrollOffset < -50 ? 10 : 0)
         )
     }
     
@@ -764,14 +745,16 @@ struct HistoryView: View {
     }
     
     // MARK: - Data Fetching Methods
-    func fetchReport() {
+    func fetchReport(showLoader: Bool = false) {
         guard currentUserId > 0 else {
             showError = true
             errorMessage = "Invalid user session"
             return
         }
         
-        isLoading = true
+        if showLoader && weeklyData.isEmpty && dailyReadings.isEmpty {
+            isLoading = true
+        }
         let endpoint: String
         
         switch selectedTimeFrame {
@@ -1807,41 +1790,6 @@ struct DetailedReportView: View {
                             Text("Health Summary")
                                 .font(.system(size: 22, weight: .bold))
                                 .foregroundColor(.primary)
-                            // Add this section to your detailed report view
-                            VStack(alignment: .leading, spacing: 16) {
-                                Text("About Risk Assessment")
-                                    .font(.headline)
-                                    .foregroundColor(.primary)
-                                
-                                Text("Risk scores are calculated based on cardiovascular risk assessment guidelines from the Framingham Heart Study.")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                
-                                if let url = URL(string: "https://www.framinghamheartstudy.org/fhs-risk-functions/cardiovascular-disease-10-year-risk/") {
-                                    Link(destination: url) {
-                                        HStack {
-                                            Image(systemName: "doc.text.fill")
-                                            Text("View Framingham Risk Score Documentation")
-                                                .fontWeight(.medium)
-                                            Spacer()
-                                            Image(systemName: "arrow.up.right")
-                                        }
-                                        .font(.subheadline)
-                                        .foregroundColor(.blue)
-                                        .padding()
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .fill(Color.blue.opacity(0.1))
-                                        )
-                                    }
-                                }
-                            }
-                            .padding()
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .fill(Color.gray.opacity(0.05))
-                            )
-                            .padding(.horizontal, 20)
 
                             VStack(spacing: 12) {
                                 HealthMetricRow(
@@ -1977,10 +1925,10 @@ struct DetailedReportView: View {
                             RoundedRectangle(cornerRadius: 16)
                                 .fill(Color.gray.opacity(0.05))
                         )
-                        .padding(.horizontal, 20)
                     }
                     
-                    // Daily Readings Section
+                    // Framingham Risk Score Documentation Card
+                    framinghamDocumentationCard
                     if !dailyReadings.isEmpty {
                         VStack(alignment: .leading, spacing: 16) {
                             Text("Daily Measurements")
@@ -2023,6 +1971,96 @@ struct DetailedReportView: View {
                 }
             }
         }
+    }
+    
+    // MARK: - Enhanced Framingham Risk Score Documentation Card
+    private var framinghamDocumentationCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.appAccent.opacity(0.22), Color.blue.opacity(0.12)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 42, height: 42)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(Color.appAccent.opacity(0.35), lineWidth: 1)
+                        )
+                    
+                    Image(systemName: "doc.text.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(Color.appAccent)
+                }
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Framingham Risk Score")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.textPrimary)
+                    
+                    Text("10-Year Cardiovascular Disease Guidelines")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Color.textSecondary)
+                }
+                
+                Spacer()
+                
+                Text("CLINICAL")
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .foregroundColor(Color.appAccent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.appAccent.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+            
+            Text("Risk scores are calculated based on peer-reviewed cardiovascular risk assessment guidelines from the Framingham Heart Study.")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundColor(Color.textSecondary)
+                .lineSpacing(2)
+            
+            if let url = URL(string: "https://www.framinghamheartstudy.org/fhs-risk-functions/cardiovascular-disease-10-year-risk/") {
+                Link(destination: url) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "safari.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(Color.appAccent)
+                        
+                        Text("View Framingham Risk Score Documentation")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundColor(Color.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                        
+                        Spacer()
+                        
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(Color.appAccent)
+                            .padding(6)
+                            .background(Color.appAccent.opacity(0.12))
+                            .clipShape(Circle())
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.appAccent.opacity(0.08))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.appAccent.opacity(0.25), lineWidth: 1)
+                    )
+                }
+            }
+        }
+        .padding(18)
+        .glossyCard(cornerRadius: 18, borderTint: Color.appAccent.opacity(0.4))
+        .padding(.horizontal, 20)
     }
     
     
@@ -2505,7 +2543,9 @@ struct EnhancedExportDataView: View {
             }
         }
         .sheet(isPresented: $showShareSheet) {
-            ShareSheet(activityItems: exportItems)
+            if !exportItems.isEmpty {
+                ShareSheet(activityItems: exportItems)
+            }
         }
         .alert("Export Status", isPresented: $showAlert) {
             Button("OK", role: .cancel) {}
@@ -2520,10 +2560,23 @@ struct EnhancedExportDataView: View {
         
         DispatchQueue.global(qos: .userInitiated).async {
             if let pdfData = createPDFData() {
-                DispatchQueue.main.async {
-                    self.isExporting = false
-                    self.exportItems = [pdfData]
-                    self.showShareSheet = true
+                // Save to file URL with proper .pdf filename in temporary directory
+                let fileName = "CoreCare_Cardiac_Health_Report.pdf"
+                let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+                
+                do {
+                    try pdfData.write(to: fileURL, options: .atomic)
+                    DispatchQueue.main.async {
+                        self.isExporting = false
+                        self.exportItems = [fileURL]
+                        self.showShareSheet = true
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        self.isExporting = false
+                        self.alertMessage = "Failed to save PDF file: \(error.localizedDescription)"
+                        self.showAlert = true
+                    }
                 }
             } else {
                 DispatchQueue.main.async {
@@ -2537,7 +2590,9 @@ struct EnhancedExportDataView: View {
     
     private func createPDFData() -> Data? {
         let pdfCreator = PDFCreator()
+        let patient = userManager.userData?.emailOrPhone ?? (userManager.currentUserId != nil ? "User ID: \(userManager.currentUserId!)" : "Patient")
         return pdfCreator.createPDF(
+            patientInfo: patient,
             summary: weeklySummary,
             dailyReadings: dailyReadings,
             riskAssessment: riskAssessment
@@ -2598,157 +2653,407 @@ struct DataSummaryRow: View {
 
 // MARK: - PDF Creator Class with Professional Medical Styling
 class PDFCreator {
-    func createPDF(summary: WeeklySummary?, dailyReadings: [DailyReading], riskAssessment: CardiacRiskAssessment?) -> Data? {
-        let pdfRenderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+    private let pageWidth: CGFloat = 612
+    private let pageHeight: CGFloat = 792
+    private let marginX: CGFloat = 44
+    private let marginY: CGFloat = 44
+    private var contentWidth: CGFloat { pageWidth - (marginX * 2) }
+    
+    private let medicalBlue = UIColor(red: 0.05, green: 0.40, blue: 0.75, alpha: 1.0)
+    private let secondaryText = UIColor(white: 0.40, alpha: 1.0)
+    private let cardBackground = UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1.0)
+    private let cardBorder = UIColor(red: 0.88, green: 0.91, blue: 0.95, alpha: 1.0)
+    
+    func createPDF(patientInfo: String = "CoreCare Patient", summary: WeeklySummary?, dailyReadings: [DailyReading], riskAssessment: CardiacRiskAssessment?) -> Data? {
+        let pdfRenderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight))
         
-        let data = pdfRenderer.pdfData { context in
+        return pdfRenderer.pdfData { context in
+            var pageNumber = 1
             context.beginPage()
             
-            var yPosition: CGFloat = 50
+            var yPosition: CGFloat = marginY
             
-            // Title with Medical Blue Color
-            let titleAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.boldSystemFont(ofSize: 26),
-                .foregroundColor: UIColor(red: 0.05, green: 0.4, blue: 0.75, alpha: 1.0)
-            ]
-            let title = "Cardiac Health Report"
-            title.draw(at: CGPoint(x: 50, y: yPosition), withAttributes: titleAttributes)
-            yPosition += 40
+            // Draw First Page Header
+            drawHeader(context: context, pageNumber: pageNumber, patientInfo: patientInfo, yPosition: &yPosition)
             
-            // Date with gray and italics
-            let dateAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.italicSystemFont(ofSize: 14),
+            // 1. Patient & Report Details Card
+            drawPatientInfoCard(context: context, patientInfo: patientInfo, summary: summary, yPosition: &yPosition)
+            
+            // 2. Health Metrics Summary
+            drawHealthSummarySection(context: context, summary: summary, yPosition: &yPosition)
+            
+            // 3. Risk Assessment Section
+            drawRiskAssessmentSection(context: context, riskAssessment: riskAssessment, patientInfo: patientInfo, pageNumber: &pageNumber, yPosition: &yPosition)
+            
+            // 4. Daily Readings Log Table
+            drawDailyReadingsSection(context: context, dailyReadings: dailyReadings, patientInfo: patientInfo, pageNumber: &pageNumber, yPosition: &yPosition)
+            
+            // Final footer on the last page
+            drawFooter(context: context, pageNumber: pageNumber)
+        }
+    }
+    
+    private func checkPageBreak(neededHeight: CGFloat, context: UIGraphicsPDFRendererContext, patientInfo: String, pageNumber: inout Int, yPosition: inout CGFloat) {
+        if yPosition + neededHeight > pageHeight - marginY - 30 {
+            drawFooter(context: context, pageNumber: pageNumber)
+            context.beginPage()
+            pageNumber += 1
+            yPosition = marginY
+            drawHeader(context: context, pageNumber: pageNumber, patientInfo: patientInfo, yPosition: &yPosition)
+        }
+    }
+    
+    private func drawHeader(context: UIGraphicsPDFRendererContext, pageNumber: Int, patientInfo: String, yPosition: inout CGFloat) {
+        let brandAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 22),
+            .foregroundColor: medicalBlue
+        ]
+        "CoreCare Health".draw(at: CGPoint(x: marginX, y: yPosition), withAttributes: brandAttributes)
+        
+        let reportTypeAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 10, weight: .bold),
+            .foregroundColor: UIColor(red: 0.1, green: 0.5, blue: 0.9, alpha: 1.0)
+        ]
+        "CLINICAL CARDIAC REPORT".draw(at: CGPoint(x: marginX, y: yPosition + 25), withAttributes: reportTypeAttributes)
+        
+        let dateAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 10, weight: .medium),
+            .foregroundColor: secondaryText
+        ]
+        let dateStr = "Date: \(DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short))"
+        let dateSize = (dateStr as NSString).size(withAttributes: dateAttributes)
+        dateStr.draw(at: CGPoint(x: pageWidth - marginX - dateSize.width, y: yPosition + 4), withAttributes: dateAttributes)
+        
+        yPosition += 45
+        
+        let cg = context.cgContext
+        cg.setStrokeColor(medicalBlue.withAlphaComponent(0.3).cgColor)
+        cg.setLineWidth(1.5)
+        cg.move(to: CGPoint(x: marginX, y: yPosition))
+        cg.addLine(to: CGPoint(x: pageWidth - marginX, y: yPosition))
+        cg.strokePath()
+        
+        yPosition += 16
+    }
+    
+    private func drawFooter(context: UIGraphicsPDFRendererContext, pageNumber: Int) {
+        let footerY = pageHeight - marginY + 10
+        let cg = context.cgContext
+        
+        cg.setStrokeColor(UIColor(white: 0.85, alpha: 1.0).cgColor)
+        cg.setLineWidth(0.5)
+        cg.move(to: CGPoint(x: marginX, y: footerY - 8))
+        cg.addLine(to: CGPoint(x: pageWidth - marginX, y: footerY - 8))
+        cg.strokePath()
+        
+        let disclaimerAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 8, weight: .regular),
+            .foregroundColor: UIColor.gray
+        ]
+        let disclaimer = "Confidential • Generated by CoreCare iOS • For personal health tracking & physician review."
+        disclaimer.draw(at: CGPoint(x: marginX, y: footerY), withAttributes: disclaimerAttributes)
+        
+        let pageAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 8, weight: .semibold),
+            .foregroundColor: UIColor.gray
+        ]
+        let pageStr = "Page \(pageNumber)"
+        let pageSize = (pageStr as NSString).size(withAttributes: pageAttributes)
+        pageStr.draw(at: CGPoint(x: pageWidth - marginX - pageSize.width, y: footerY), withAttributes: pageAttributes)
+    }
+    
+    private func drawPatientInfoCard(context: UIGraphicsPDFRendererContext, patientInfo: String, summary: WeeklySummary?, yPosition: inout CGFloat) {
+        let cardRect = CGRect(x: marginX, y: yPosition, width: contentWidth, height: 48)
+        let cg = context.cgContext
+        
+        cg.setFillColor(cardBackground.cgColor)
+        cg.setStrokeColor(cardBorder.cgColor)
+        cg.setLineWidth(1.0)
+        let path = UIBezierPath(roundedRect: cardRect, cornerRadius: 8)
+        cg.addPath(path.cgPath)
+        cg.drawPath(using: .fillStroke)
+        
+        let labelAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 9, weight: .medium),
+            .foregroundColor: secondaryText
+        ]
+        let valAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 11),
+            .foregroundColor: UIColor.darkText
+        ]
+        
+        "PATIENT / ACCOUNT".draw(at: CGPoint(x: marginX + 16, y: yPosition + 10), withAttributes: labelAttr)
+        patientInfo.draw(at: CGPoint(x: marginX + 16, y: yPosition + 24), withAttributes: valAttr)
+        
+        "EVALUATION PERIOD".draw(at: CGPoint(x: marginX + 220, y: yPosition + 10), withAttributes: labelAttr)
+        "Last 7 Days Assessment".draw(at: CGPoint(x: marginX + 220, y: yPosition + 24), withAttributes: valAttr)
+        
+        "STATUS".draw(at: CGPoint(x: marginX + 400, y: yPosition + 10), withAttributes: labelAttr)
+        "Active Record".draw(at: CGPoint(x: marginX + 400, y: yPosition + 24), withAttributes: valAttr)
+        
+        yPosition += 62
+    }
+    
+    private func drawHealthSummarySection(context: UIGraphicsPDFRendererContext, summary: WeeklySummary?, yPosition: inout CGFloat) {
+        let sectionTitleAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 14),
+            .foregroundColor: medicalBlue
+        ]
+        "VITAL METRICS SUMMARY".draw(at: CGPoint(x: marginX, y: yPosition), withAttributes: sectionTitleAttr)
+        yPosition += 22
+        
+        let cardWidth = (contentWidth - 20) / 3
+        let cardHeight: CGFloat = 64
+        
+        let avgBPM = summary != nil ? "\(Int(summary!.avg_bpm)) BPM" : "--"
+        let hrRange = summary != nil ? "\(summary!.min_bpm) - \(summary!.max_bpm) BPM" : "No range data"
+        drawMetricBox(context: context, rect: CGRect(x: marginX, y: yPosition, width: cardWidth, height: cardHeight), title: "AVERAGE HEART RATE", value: avgBPM, subtext: "Range: \(hrRange)", valueColor: UIColor(red: 0.9, green: 0.2, blue: 0.2, alpha: 1.0))
+        
+        let bpText = summary != nil ? "\(summary!.avg_bp_systolic)/\(summary!.avg_bp_diastolic) mmHg" : "--"
+        drawMetricBox(context: context, rect: CGRect(x: marginX + cardWidth + 10, y: yPosition, width: cardWidth, height: cardHeight), title: "AVG BLOOD PRESSURE", value: bpText, subtext: "Systolic / Diastolic", valueColor: medicalBlue)
+        
+        let statusText = summary != nil ? "Regular" : "No Data"
+        let statusSub = summary != nil ? "Monitored Regularly" : "Awaiting readings"
+        drawMetricBox(context: context, rect: CGRect(x: marginX + (cardWidth + 10) * 2, y: yPosition, width: cardWidth, height: cardHeight), title: "ACTIVITY STATUS", value: statusText, subtext: statusSub, valueColor: UIColor(red: 0.1, green: 0.6, blue: 0.3, alpha: 1.0))
+        
+        yPosition += cardHeight + 20
+    }
+    
+    private func drawMetricBox(context: UIGraphicsPDFRendererContext, rect: CGRect, title: String, value: String, subtext: String, valueColor: UIColor) {
+        let cg = context.cgContext
+        cg.setFillColor(cardBackground.cgColor)
+        cg.setStrokeColor(cardBorder.cgColor)
+        cg.setLineWidth(1.0)
+        let path = UIBezierPath(roundedRect: rect, cornerRadius: 8)
+        cg.addPath(path.cgPath)
+        cg.drawPath(using: .fillStroke)
+        
+        let titleAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 8, weight: .bold),
+            .foregroundColor: secondaryText
+        ]
+        title.draw(at: CGPoint(x: rect.minX + 10, y: rect.minY + 10), withAttributes: titleAttr)
+        
+        let valAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 15),
+            .foregroundColor: valueColor
+        ]
+        value.draw(at: CGPoint(x: rect.minX + 10, y: rect.minY + 24), withAttributes: valAttr)
+        
+        let subAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 8, weight: .regular),
+            .foregroundColor: secondaryText
+        ]
+        subtext.draw(at: CGPoint(x: rect.minX + 10, y: rect.minY + 46), withAttributes: subAttr)
+    }
+    
+    private func drawRiskAssessmentSection(context: UIGraphicsPDFRendererContext, riskAssessment: CardiacRiskAssessment?, patientInfo: String, pageNumber: inout Int, yPosition: inout CGFloat) {
+        checkPageBreak(neededHeight: 120, context: context, patientInfo: patientInfo, pageNumber: &pageNumber, yPosition: &yPosition)
+        
+        let sectionTitleAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 14),
+            .foregroundColor: medicalBlue
+        ]
+        "CARDIOVASCULAR RISK ASSESSMENT".draw(at: CGPoint(x: marginX, y: yPosition), withAttributes: sectionTitleAttr)
+        yPosition += 22
+        
+        if let risk = riskAssessment {
+            let riskColor: UIColor
+            switch risk.risk_level.lowercased() {
+            case "high": riskColor = UIColor(red: 0.85, green: 0.15, blue: 0.15, alpha: 1.0)
+            case "moderate": riskColor = UIColor(red: 0.95, green: 0.55, blue: 0.10, alpha: 1.0)
+            default: riskColor = UIColor(red: 0.15, green: 0.65, blue: 0.35, alpha: 1.0)
+            }
+            
+            let cardRect = CGRect(x: marginX, y: yPosition, width: contentWidth, height: 42)
+            let cg = context.cgContext
+            cg.setFillColor(cardBackground.cgColor)
+            cg.setStrokeColor(cardBorder.cgColor)
+            cg.setLineWidth(1.0)
+            cg.addPath(UIBezierPath(roundedRect: cardRect, cornerRadius: 8).cgPath)
+            cg.drawPath(using: .fillStroke)
+            
+            let riskLevelTitleAttr: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 11, weight: .medium),
                 .foregroundColor: UIColor.darkGray
             ]
-            let dateString = "Generated: \(DateFormatter.localizedString(from: Date(), dateStyle: .full, timeStyle: .short))"
-            dateString.draw(at: CGPoint(x: 50, y: yPosition), withAttributes: dateAttributes)
-            yPosition += 40
+            "Calculated Risk Level:".draw(at: CGPoint(x: marginX + 14, y: yPosition + 14), withAttributes: riskLevelTitleAttr)
             
-            // Draw a thin separator line
-            let lineFrame = CGRect(x: 50, y: yPosition, width: 512, height: 1)
-            context.cgContext.setStrokeColor(UIColor(red: 0.05, green: 0.4, blue: 0.75, alpha: 0.5).cgColor)
-            context.cgContext.setLineWidth(1)
-            context.cgContext.move(to: CGPoint(x: lineFrame.minX, y: lineFrame.minY))
-            context.cgContext.addLine(to: CGPoint(x: lineFrame.maxX, y: lineFrame.minY))
-            context.cgContext.strokePath()
-            yPosition += 20
-            
-            // Summary Section Header
-            let sectionHeaderAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.boldSystemFont(ofSize: 20),
-                .foregroundColor: UIColor(red: 0.05, green: 0.4, blue: 0.75, alpha: 1.0)
+            let riskLevelValAttr: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 13),
+                .foregroundColor: riskColor
             ]
-            "Health Summary".draw(at: CGPoint(x: 50, y: yPosition), withAttributes: sectionHeaderAttributes)
-            yPosition += 30
+            risk.risk_level.uppercased().draw(at: CGPoint(x: marginX + 150, y: yPosition + 13), withAttributes: riskLevelValAttr)
             
-            let regularAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 14),
-                .foregroundColor: UIColor.black
+            let scoreAttr: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 11, weight: .medium),
+                .foregroundColor: UIColor.darkGray
             ]
+            let scoreStr = "Score: \(risk.risk_score)/100"
+            let scoreSize = (scoreStr as NSString).size(withAttributes: scoreAttr)
+            scoreStr.draw(at: CGPoint(x: pageWidth - marginX - scoreSize.width - 14, y: yPosition + 14), withAttributes: scoreAttr)
             
-            if let summary = summary {
-                let summaryItems = [
-                    "Average Heart Rate: \(Int(summary.avg_bpm)) BPM",
-                    "Heart Rate Range: \(summary.min_bpm) - \(summary.max_bpm) BPM",
-                    "Average Blood Pressure: \(summary.avg_bp_systolic)/\(summary.avg_bp_diastolic) mmHg"
+            yPosition += 52
+            
+            if !risk.factors.isEmpty {
+                checkPageBreak(neededHeight: 40, context: context, patientInfo: patientInfo, pageNumber: &pageNumber, yPosition: &yPosition)
+                let subheadAttr: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.boldSystemFont(ofSize: 11),
+                    .foregroundColor: UIColor.darkText
                 ]
-                for item in summaryItems {
-                    item.draw(at: CGPoint(x: 70, y: yPosition), withAttributes: regularAttributes)
-                    yPosition += 22
-                }
-            } else {
-                "No health summary data available.".draw(at: CGPoint(x: 70, y: yPosition), withAttributes: regularAttributes)
-                yPosition += 22
-            }
-            
-            yPosition += 10
-            
-            // Draw a separator
-            context.cgContext.setStrokeColor(UIColor.lightGray.cgColor)
-            context.cgContext.setLineWidth(0.5)
-            context.cgContext.move(to: CGPoint(x: 50, y: yPosition))
-            context.cgContext.addLine(to: CGPoint(x: 562, y: yPosition))
-            context.cgContext.strokePath()
-            yPosition += 20
-            
-            // Risk Assessment Section Header
-            "Risk Assessment".draw(at: CGPoint(x: 50, y: yPosition), withAttributes: sectionHeaderAttributes)
-            yPosition += 30
-            
-            if let risk = riskAssessment {
-                let riskLevelAttributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.boldSystemFont(ofSize: 16),
-                    .foregroundColor: UIColor(red: 0.8, green: 0.1, blue: 0.1, alpha: 1.0)
-                ]
-                "Risk Level: \(risk.risk_level)".draw(at: CGPoint(x: 70, y: yPosition), withAttributes: riskLevelAttributes)
-                yPosition += 22
-                "Risk Score: \(risk.risk_score)".draw(at: CGPoint(x: 70, y: yPosition), withAttributes: regularAttributes)
-                yPosition += 24
-                
-                if !risk.factors.isEmpty {
-                    "Risk Factors:".draw(at: CGPoint(x: 70, y: yPosition), withAttributes: sectionHeaderAttributes)
-                    yPosition += 26
-                    for factor in risk.factors {
-                        let bulletPoint = "• \(factor)"
-                        bulletPoint.draw(at: CGPoint(x: 90, y: yPosition), withAttributes: regularAttributes)
-                        yPosition += 20
-                    }
-                }
-                if !risk.recommendations.isEmpty {
-                    yPosition += 10
-                    "Recommendations:".draw(at: CGPoint(x: 70, y: yPosition), withAttributes: sectionHeaderAttributes)
-                    yPosition += 26
-                    for recommendation in risk.recommendations {
-                        let bulletPoint = "• \(recommendation)"
-                        bulletPoint.draw(at: CGPoint(x: 90, y: yPosition), withAttributes: regularAttributes)
-                        yPosition += 20
-                    }
-                }
-            } else {
-                "No risk assessment data available.".draw(at: CGPoint(x: 70, y: yPosition), withAttributes: regularAttributes)
-                yPosition += 22
-            }
-            
-            yPosition += 10
-            
-            // Draw another separator
-            context.cgContext.setStrokeColor(UIColor.lightGray.cgColor)
-            context.cgContext.setLineWidth(0.5)
-            context.cgContext.move(to: CGPoint(x: 50, y: yPosition))
-            context.cgContext.addLine(to: CGPoint(x: 562, y: yPosition))
-            context.cgContext.strokePath()
-            yPosition += 20
-            
-            // Daily Readings Header
-            "Daily Readings".draw(at: CGPoint(x: 50, y: yPosition), withAttributes: sectionHeaderAttributes)
-            yPosition += 30
-            
-            let smallFontAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 12),
-                .foregroundColor: UIColor.black
-            ]
-            
-            for reading in dailyReadings {
-                if (yPosition > 720) {
-                    context.beginPage()
-                    yPosition = 50
-                }
-                let dailyText = "\(reading.date): Avg HR \(Int(reading.avg_bpm)) BPM, BP \(reading.avg_systolic)/\(reading.avg_diastolic) mmHg"
-                dailyText.draw(at: CGPoint(x: 70, y: yPosition), withAttributes: smallFontAttributes)
+                "Identified Risk Factors:".draw(at: CGPoint(x: marginX + 4, y: yPosition), withAttributes: subheadAttr)
                 yPosition += 18
+                
+                let regularAttr: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 10),
+                    .foregroundColor: UIColor(white: 0.2, alpha: 1.0)
+                ]
+                
+                for factor in risk.factors {
+                    checkPageBreak(neededHeight: 20, context: context, patientInfo: patientInfo, pageNumber: &pageNumber, yPosition: &yPosition)
+                    drawWrappedText(bulletText: "•  \(factor)", x: marginX + 12, width: contentWidth - 24, attributes: regularAttr, yPosition: &yPosition)
+                }
+                yPosition += 10
             }
+            
+            if !risk.recommendations.isEmpty {
+                checkPageBreak(neededHeight: 40, context: context, patientInfo: patientInfo, pageNumber: &pageNumber, yPosition: &yPosition)
+                let subheadAttr: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.boldSystemFont(ofSize: 11),
+                    .foregroundColor: UIColor.darkText
+                ]
+                "Clinical Recommendations:".draw(at: CGPoint(x: marginX + 4, y: yPosition), withAttributes: subheadAttr)
+                yPosition += 18
+                
+                let regularAttr: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 10),
+                    .foregroundColor: UIColor(white: 0.2, alpha: 1.0)
+                ]
+                
+                for rec in risk.recommendations {
+                    checkPageBreak(neededHeight: 24, context: context, patientInfo: patientInfo, pageNumber: &pageNumber, yPosition: &yPosition)
+                    drawWrappedText(bulletText: "•  \(rec)", x: marginX + 12, width: contentWidth - 24, attributes: regularAttr, yPosition: &yPosition)
+                }
+                yPosition += 12
+            }
+        } else {
+            let regularAttr: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 10),
+                .foregroundColor: UIColor.gray
+            ]
+            "No risk assessment data recorded for this timeframe.".draw(at: CGPoint(x: marginX + 4, y: yPosition), withAttributes: regularAttr)
+            yPosition += 24
         }
         
-        return data
+        yPosition += 12
+    }
+    
+    private func drawDailyReadingsSection(context: UIGraphicsPDFRendererContext, dailyReadings: [DailyReading], patientInfo: String, pageNumber: inout Int, yPosition: inout CGFloat) {
+        checkPageBreak(neededHeight: 80, context: context, patientInfo: patientInfo, pageNumber: &pageNumber, yPosition: &yPosition)
+        
+        let sectionTitleAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 14),
+            .foregroundColor: medicalBlue
+        ]
+        "DAILY MEASUREMENTS LOG".draw(at: CGPoint(x: marginX, y: yPosition), withAttributes: sectionTitleAttr)
+        yPosition += 22
+        
+        let colWidths: [CGFloat] = [140, 120, 140, 124]
+        let colHeaders = ["DATE", "AVG HEART RATE", "BLOOD PRESSURE", "HRV"]
+        let headerHeight: CGFloat = 22
+        
+        let cg = context.cgContext
+        let headerRect = CGRect(x: marginX, y: yPosition, width: contentWidth, height: headerHeight)
+        cg.setFillColor(medicalBlue.withAlphaComponent(0.08).cgColor)
+        cg.fill(headerRect)
+        
+        let thAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 8, weight: .bold),
+            .foregroundColor: medicalBlue
+        ]
+        
+        var colX = marginX + 10
+        for (i, title) in colHeaders.enumerated() {
+            title.draw(at: CGPoint(x: colX, y: yPosition + 6), withAttributes: thAttr)
+            colX += colWidths[i]
+        }
+        yPosition += headerHeight
+        
+        if dailyReadings.isEmpty {
+            let emptyAttr: [NSAttributedString.Key: Any] = [
+                .font: UIFont.italicSystemFont(ofSize: 10),
+                .foregroundColor: UIColor.gray
+            ]
+            "No daily readings logged for this timeframe.".draw(at: CGPoint(x: marginX + 10, y: yPosition + 8), withAttributes: emptyAttr)
+            yPosition += 26
+            return
+        }
+        
+        let rowHeight: CGFloat = 20
+        let tdAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 9),
+            .foregroundColor: UIColor.darkText
+        ]
+        
+        for (idx, reading) in dailyReadings.enumerated() {
+            checkPageBreak(neededHeight: rowHeight + 10, context: context, patientInfo: patientInfo, pageNumber: &pageNumber, yPosition: &yPosition)
+            
+            let rowRect = CGRect(x: marginX, y: yPosition, width: contentWidth, height: rowHeight)
+            if idx % 2 == 1 {
+                cg.setFillColor(UIColor(white: 0.97, alpha: 1.0).cgColor)
+                cg.fill(rowRect)
+            }
+            
+            let hrvStr = reading.hrv != nil ? String(format: "%.1f ms", reading.hrv!) : "--"
+            let values = [
+                reading.date,
+                "\(Int(reading.avg_bpm)) BPM",
+                "\(reading.avg_systolic)/\(reading.avg_diastolic) mmHg",
+                hrvStr
+            ]
+            
+            colX = marginX + 10
+            for (i, val) in values.enumerated() {
+                val.draw(at: CGPoint(x: colX, y: yPosition + 5), withAttributes: tdAttr)
+                colX += colWidths[i]
+            }
+            
+            yPosition += rowHeight
+        }
+    }
+    
+    private func drawWrappedText(bulletText: String, x: CGFloat, width: CGFloat, attributes: [NSAttributedString.Key: Any], yPosition: inout CGFloat) {
+        let str = bulletText as NSString
+        let bounds = str.boundingRect(
+            with: CGSize(width: width, height: 1000),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes,
+            context: nil
+        )
+        let rect = CGRect(x: x, y: yPosition, width: width, height: ceil(bounds.height))
+        str.draw(in: rect, withAttributes: attributes)
+        yPosition += ceil(bounds.height) + 6
     }
 }
 
 // MARK: - ShareSheet for iOS
 struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
+    var applicationActivities: [UIActivity]? = nil
     
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        let controller = UIActivityViewController(
+            activityItems: activityItems,
+            applicationActivities: applicationActivities
+        )
+        if let popover = controller.popoverPresentationController {
+            popover.permittedArrowDirections = []
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootVC = windowScene.windows.first?.rootViewController {
+                popover.sourceView = rootVC.view
+                popover.sourceRect = CGRect(x: rootVC.view.bounds.midX, y: rootVC.view.bounds.midY, width: 0, height: 0)
+            }
+        }
         return controller
     }
     

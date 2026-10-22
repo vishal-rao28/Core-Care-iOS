@@ -64,7 +64,24 @@ struct AIView: View {
                 .animation(.easeInOut(duration: 3).repeatForever(autoreverses: true), value: particleAnimation)
             
             if toBreathe {
-                BreatheView()
+                BreatheView(
+                    initialTechnique: stressCategory == "High" ? .quickReset : .coherence,
+                    onSessionComplete: { _ in
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                            toBreathe = false
+                        }
+                    },
+                    onSessionEnd: {
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                            toBreathe = false
+                        }
+                    },
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                            toBreathe = false
+                        }
+                    }
+                )
                     .transition(.asymmetric(
                         insertion: .scale.combined(with: .opacity),
                         removal: .slide
@@ -156,11 +173,7 @@ struct AIView: View {
                         .padding(.horizontal)
                 }
                 .padding(25)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.cardBackground)
-                        .shadow(color: Color.cardShadow, radius: 10)
-                )
+                .glossyCard(cornerRadius: 20, borderTint: Color.red)
                 
                 HStack(spacing: 20) {
                     Button("Not Now") {
@@ -243,7 +256,8 @@ struct AIView: View {
                     .padding(.top, safeTop + 8)
                     .padding(.bottom, 12)
                     .background(
-                        Color.white.opacity(0.85)
+                        Color.appBackground.opacity(0.85)
+                            .background(.ultraThinMaterial)
                     )
 
                 ScrollView {
@@ -760,23 +774,7 @@ struct AIView: View {
             }
         }
         .padding(25)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(Color.cardBackground)
-                    .shadow(color: Color.cardShadow, radius: 8, x: 0, y: 4)
-                
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(
-                        LinearGradient(
-                            colors: [.blue.opacity(0.3), .purple.opacity(0.2)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            }
-        )
+        .glossyCard(cornerRadius: 20, borderTint: Color.blue)
         .padding(.horizontal, 25)
     }
     
@@ -1038,34 +1036,7 @@ struct AIView: View {
             }
         }
         .padding(25)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(Color.cardBackground)
-                    .shadow(color: Color.cardShadow, radius: 10, x: 0, y: 5)
-                
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(
-                        LinearGradient(
-                            colors: [.purple.opacity(0.3), .blue.opacity(0.2)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1.5
-                    )
-                
-                // Subtle inner glow
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(
-                        RadialGradient(
-                            colors: [.purple.opacity(0.03), .clear],
-                            center: .topLeading,
-                            startRadius: 50,
-                            endRadius: 200
-                        )
-                    )
-            }
-        )
+        .glossyCard(cornerRadius: 20, borderTint: Color.purple)
         .padding(.horizontal, 25)
         .padding(.bottom, 35)
     }
@@ -1873,16 +1844,7 @@ struct AdvancedRiskCard: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
         .padding(.horizontal, 15)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.cardBackground)
-                    .shadow(color: Color.cardShadow, radius: 5, x: 0, y: 3)
-                
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(color.opacity(0.2), lineWidth: 1.5)
-            }
-        )
+        .glossyCard(cornerRadius: 16, borderTint: color)
         .if(isWide) { view in
             view.frame(maxWidth: .infinity)
         }
@@ -1949,16 +1911,7 @@ struct AdvancedVitalCard: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 15)
         .padding(.horizontal, 12)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.cardBackground)
-                    .shadow(color: Color.cardShadow, radius: 4, x: 0, y: 2)
-                
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(color.opacity(0.2), lineWidth: 1)
-            }
-        )
+        .glossyCard(cornerRadius: 14, borderTint: color)
     }
 }
 
@@ -2033,16 +1986,7 @@ struct AdvancedRecommendationCard: View {
                 .foregroundColor(recommendation.priority.color.opacity(0.6))
         }
         .padding(18)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.cardBackground)
-                    .shadow(color: Color.cardShadow, radius: 5, x: 0, y: 3)
-                
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(recommendation.priority.color.opacity(0.2), lineWidth: 1.5)
-            }
-        )
+        .glossyCard(cornerRadius: 16, borderTint: recommendation.priority.color)
     }
 }
 

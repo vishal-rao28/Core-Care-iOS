@@ -419,9 +419,9 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
     
-    // ENHANCED: Larger buffer for 30-second measurement window
+    // ENHANCED: Buffer for 15-second measurement window at 30 FPS
     private var frameBuffer: [Float] = []
-    private let bufferSize = 900  // 30 seconds at 30 FPS - better for accurate FFT
+    private let bufferSize = 600  // Up to 20 seconds at 30 FPS
     
     private var isMeasuring = false
     private var fingerDetected = false
@@ -435,8 +435,8 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
     private let brightnessHistorySize = 30
     
     private let fingerDetectionBrightnessMin: Float = 0.05
-    private let fingerDetectionStability: Float = 0.30
-    private let minRedChannelValue: Float = 30.0
+    private let fingerDetectionStability: Float = 0.05
+    private let minRedChannelValue: Float = 35.0
     
     private func getAdaptiveFingerThreshold(brightness: Float) -> Float {
         if brightness > 0.6 { return 0.04 }
@@ -451,15 +451,15 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
     private let cameraQueue = DispatchQueue(label: "camera.ppg.queue", qos: .userInitiated)
     private let processingQueue = DispatchQueue(label: "processing.ppg.queue", qos: .userInitiated)
     
-    // ENHANCED: More robust validation
+    // ENHANCED: Robust validation
     private var consecutiveValidSamples = 0
-    private let requiredConsecutiveValidSamples = 2
+    private let requiredConsecutiveValidSamples = 3
     private var bpmAlreadySent = false
     
     // ENHANCED: Signal quality tracking
     private var lastCalculatedBPM = 0
     private var bpmHistory: [Int] = []
-    private let maxBPMHistorySize = 5
+    private let maxBPMHistorySize = 10
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -841,11 +841,11 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
             strongSelf.safeCallQualityCallback(quality)
         }
         
-        guard isFingerDetected && quality > 0.15 else { return }
+        guard isFingerDetected && quality >= 0.15 else { return }
         
-        if let redValue = extractPPGSignal(from: pixelBuffer) {
+        if let signalSample = extractPPGSignal(from: pixelBuffer) {
             processingQueue.async {
-                self.processPPGSample(redValue)
+                self.processPPGSample(signalSample)
             }
         }
     }
@@ -869,14 +869,14 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
         var totalBlue: Float = 0
         var count: Int = 0
         
-        let sampleSize = min(180, min(width, height))
+        let sampleSize = min(120, min(width, height))
         let startX = (width - sampleSize) / 2
         let startY = (height - sampleSize) / 2
         
         for y in startY..<(startY + sampleSize) {
             for x in startX..<(startX + sampleSize) {
                 let offset = y * bytesPerRow + x * 4
-                if offset + 3 < bytesPerRow * height {
+                if offset + 2 < bytesPerRow * height {
                     let b = Float(buffer[offset + 0])
                     let g = Float(buffer[offset + 1])
                     let r = Float(buffer[offset + 2])
@@ -902,17 +902,26 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
             brightnessHistory.removeFirst()
         }
         
-        let adaptiveThreshold = getAdaptiveFingerThreshold(brightness: brightness)
+        // Biological finger placement characteristics with camera torch:
+        // 1. Red channel is high due to torch light passing through blood-perfused skin tissue (>= 45.0)
+        // 2. Green and Blue are strongly absorbed by hemoglobin, making Red clearly dominant
+        // 3. Red ratio: avgRed / (avgGreen + avgBlue) >= 0.75 without any artificial upper limit
         let redRatio = avgRed / max(avgGreen + avgBlue, 1.0)
-        let isFingerPresent = brightness > adaptiveThreshold && redRatio > 0.25 && redRatio < 3.0
+        let isRedDominant = (avgRed > avgGreen * 1.12) && (avgRed > avgBlue * 1.25)
+        let isFingerPresent = (avgRed >= 45.0) && isRedDominant && (redRatio >= 0.75) && (brightness >= 0.05)
         
         var quality: Float = 0.0
-        if brightnessHistory.count >= 5 {
-            let mean = brightnessHistory.reduce(0, +) / Float(brightnessHistory.count)
-            let variance = brightnessHistory.map { pow($0 - mean, 2) }.reduce(0, +) / Float(brightnessHistory.count)
-            let stability = max(0, 1.0 - (variance / fingerDetectionStability))
-            let brightnessQuality = min(brightness / adaptiveThreshold, 1.0)
-            quality = (stability * 0.6 + brightnessQuality * 0.4)
+        if isFingerPresent {
+            // Stability based on brightness variance
+            var stability: Float = 0.8
+            if brightnessHistory.count >= 5 {
+                let mean = brightnessHistory.reduce(0, +) / Float(brightnessHistory.count)
+                let variance = brightnessHistory.map { pow($0 - mean, 2) }.reduce(0, +) / Float(brightnessHistory.count)
+                stability = max(0.0, min(1.0, 1.0 - (variance / 0.01)))
+            }
+            // Signal strength based on red dominance ratio
+            let ratioQuality = min(redRatio / 1.5, 1.0)
+            quality = min(max(stability * 0.4 + ratioQuality * 0.6, 0.2), 1.0)
         }
         
         return (isFingerPresent, brightness, quality)
@@ -931,6 +940,7 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
         
         var totalRed: Float = 0
+        var totalGreen: Float = 0
         var count: Int = 0
         
         let sampleSize = min(120, min(width, height))
@@ -941,8 +951,10 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
             for x in startX..<(startX + sampleSize) {
                 let offset = y * bytesPerRow + x * 4
                 if offset + 2 < bytesPerRow * height {
+                    let g = Float(buffer[offset + 1])
                     let r = Float(buffer[offset + 2])
                     totalRed += r
+                    totalGreen += g
                     count += 1
                 }
             }
@@ -951,26 +963,33 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
         guard count > 0 else { return nil }
         
         let avgRed = totalRed / Float(count)
+        let avgGreen = totalGreen / Float(count)
         guard avgRed > minRedChannelValue else { return nil }
         
-        return avgRed
+        // If red channel saturates (> 220), use green channel which has high hemoglobin
+        // absorption pulsatility without clipping
+        if avgRed > 220.0 {
+            return 255.0 - avgGreen
+        } else {
+            return avgRed
+        }
     }
     
-    private func processPPGSample(_ redValue: Float) {
+    private func processPPGSample(_ sampleValue: Float) {
         guard isMeasuring && !isCleaningUp && !bpmAlreadySent else { return }
         
-        frameBuffer.append(redValue)
+        frameBuffer.append(sampleValue)
         
         if frameBuffer.count > bufferSize {
             frameBuffer.removeFirst()
         }
         
-        // ENHANCED: Process when buffer reaches optimal size (900 = 30 seconds)
-        if frameBuffer.count >= 600 {  // 20 seconds for faster detection
+        // Intermediate calculation after ~7 seconds (210 frames at 30 FPS)
+        if frameBuffer.count >= 210 && frameBuffer.count % 15 == 0 {
             let bpm = calculateAccurateHeartRate(from: frameBuffer)
-            print("💓 Calculated BPM: \(bpm) from \(frameBuffer.count) samples")
+            print("💓 Intermediate Calculated BPM: \(bpm) from \(frameBuffer.count) samples")
             
-            if bpm >= 45 && bpm <= 180 {
+            if bpm >= 45 && bpm <= 190 {
                 bpmHistory.append(bpm)
                 if bpmHistory.count > maxBPMHistorySize {
                     bpmHistory.removeFirst()
@@ -979,19 +998,48 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
                 consecutiveValidSamples += 1
                 print("✅ Valid BPM reading (\(consecutiveValidSamples)/\(requiredConsecutiveValidSamples))")
                 
-                if consecutiveValidSamples >= requiredConsecutiveValidSamples {
+                // If we have high confidence (3 consecutive matching samples) and at least 300 samples (10s)
+                if consecutiveValidSamples >= 3 && frameBuffer.count >= 300 {
                     let finalBPM = calculateMedianBPM()
-                    print("🎉 SUCCESS: Got valid readings! Final BPM: \(finalBPM)")
+                    print("🎉 EARLY SUCCESS: Got steady readings! Final BPM: \(finalBPM)")
                     DispatchQueue.main.async { [weak self] in
                         self?.stopMeasurementTimeout()
                         self?.safeCallBPMCallback(finalBPM)
                     }
-                    return
                 }
             } else {
                 consecutiveValidSamples = 0
-                print("⚠️ BPM out of range (\(bpm)), resetting counter")
             }
+        }
+    }
+    
+    @discardableResult
+    func finishMeasurementAndDeliver() -> Int {
+        guard !bpmAlreadySent else { return lastCalculatedBPM }
+        print("🏁 Finishing measurement with \(frameBuffer.count) samples in buffer")
+        
+        var finalBPM = 0
+        if frameBuffer.count >= 150 { // At least 5 seconds of signal data
+            let computed = calculateAccurateHeartRate(from: frameBuffer)
+            if computed >= 45 && computed <= 195 {
+                bpmHistory.append(computed)
+            }
+        }
+        
+        if !bpmHistory.isEmpty {
+            finalBPM = calculateMedianBPM()
+        }
+        
+        if finalBPM >= 45 && finalBPM <= 195 {
+            print("🎉 Final Measurement Delivered: \(finalBPM) BPM")
+            DispatchQueue.main.async { [weak self] in
+                self?.stopMeasurementTimeout()
+                self?.safeCallBPMCallback(finalBPM)
+            }
+            return finalBPM
+        } else {
+            print("⚠️ Could not determine reliable BPM from buffer")
+            return 0
         }
     }
     
@@ -1008,25 +1056,27 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
     
     private func calculateAccurateHeartRate(from signal: [Float]) -> Int {
         let n = signal.count
-        guard n >= 300 else { return 0 }
+        guard n >= 150 else { return 0 }
         
-        let preprocessedSignal = preprocessPPGSignal(signal)
+        // FFT needs Hamming window + detrending to prevent spectral leakage
+        let fftSignal = preprocessPPGSignalForFFT(signal)
+        let fftBPM = performFFTHeartRateAnalysis(fftSignal)
         
-        // Method 1: FFT Analysis
-        let fftBPM = performFFTHeartRateAnalysis(preprocessedSignal)
-        
-        // Method 2: Time-Domain Peak Detection
-        let timeDomainBPM = calculateTimeDomainHeartRate(from: preprocessedSignal)
-        
-        // Method 3: Autocorrelation
-        let autocorrBPM = performAutocorrelationAnalysis(preprocessedSignal)
+        // Time domain and Autocorrelation need non-windowed smoothed signal
+        let timeSignal = preprocessPPGSignalForTimeDomain(signal)
+        let timeDomainBPM = calculateTimeDomainHeartRate(from: timeSignal)
+        let autocorrBPM = performAutocorrelationAnalysis(timeSignal)
         
         print("📊 Method Results - FFT: \(fftBPM), Time Domain: \(timeDomainBPM), Autocorr: \(autocorrBPM)")
         
-        return selectBestMethodRobust(fft: fftBPM, timeDomain: timeDomainBPM, autocorr: autocorrBPM)
+        let bestBPM = selectBestMethodRobust(fft: fftBPM, timeDomain: timeDomainBPM, autocorr: autocorrBPM)
+        if bestBPM > 0 {
+            lastCalculatedBPM = bestBPM
+        }
+        return bestBPM
     }
 
-    private func preprocessPPGSignal(_ signal: [Float]) -> [Float] {
+    private func preprocessPPGSignalForFFT(_ signal: [Float]) -> [Float] {
         let n = signal.count
         guard n >= 64 else { return signal }
         
@@ -1060,15 +1110,40 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
         return filtered
     }
 
+    private func preprocessPPGSignalForTimeDomain(_ signal: [Float]) -> [Float] {
+        let n = signal.count
+        guard n >= 16 else { return signal }
+        
+        // Step 1: Remove DC baseline
+        var mean: Float = 0
+        vDSP_meanv(signal, 1, &mean, vDSP_Length(n))
+        var detrended = [Float](repeating: 0, count: n)
+        var negMean = -mean
+        vDSP_vsadd(signal, 1, &negMean, &detrended, 1, vDSP_Length(n))
+        
+        // Step 2: High pass filter (cutoff ~0.6 Hz) to eliminate slow baseline drift without differentiating
+        let hpFiltered = applyHighPassFilter(detrended)
+        
+        // Step 3: 5-point weighted moving average smoothing to eliminate camera sensor noise
+        var smoothed = hpFiltered
+        for i in 2..<(n - 2) {
+            smoothed[i] = (hpFiltered[i - 2] + 2.0 * hpFiltered[i - 1] + 3.0 * hpFiltered[i] + 2.0 * hpFiltered[i + 1] + hpFiltered[i + 2]) / 9.0
+        }
+        return smoothed
+    }
+
     private func applyHighPassFilter(_ signal: [Float]) -> [Float] {
         let n = signal.count
         guard n >= 10 else { return signal }
         
-        var output = signal
-        let alpha: Float = 0.02
+        // Standard discrete 1-pole high-pass filter: y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+        // With alpha = 0.92, cutoff is ~0.6 Hz at 30 FPS. This preserves the cardiac wave while removing baseline wander.
+        var output = [Float](repeating: 0, count: n)
+        let alpha: Float = 0.92
+        output[0] = 0
         
         for i in 1..<n {
-            output[i] = alpha * output[i - 1] + signal[i] - signal[i - 1]
+            output[i] = alpha * (output[i - 1] + signal[i] - signal[i - 1])
         }
         
         return output
@@ -1076,13 +1151,15 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
 
     private func performFFTHeartRateAnalysis(_ signal: [Float]) -> Int {
         let n = signal.count
-        let log2n = vDSP_Length(log2(Float(n)))
+        let log2n = vDSP_Length(floor(log2(Float(n))))
+        let fftLength = 1 << log2n
+        guard fftLength >= 64 else { return 0 }
         
         guard let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else { return 0 }
         defer { vDSP_destroy_fftsetup(fftSetup) }
         
-        var real = signal
-        var imag = [Float](repeating: 0, count: n)
+        var real = Array(signal.prefix(fftLength))
+        var imag = [Float](repeating: 0, count: fftLength)
         var bpmResult = 0
         
         real.withUnsafeMutableBufferPointer { realPtr in
@@ -1097,56 +1174,48 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
                 
                 vDSP_fft_zip(fftSetup, &splitComplex, 1, log2n, Int32(kFFTDirection_Forward))
                 
-                var magnitudes = [Float](repeating: 0, count: n / 2)
-                vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(n / 2))
+                var magnitudes = [Float](repeating: 0, count: fftLength / 2)
+                vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(fftLength / 2))
                 
                 let samplingRate: Float = 30.0
-                let freqResolution = samplingRate / Float(n)
+                let freqResolution = samplingRate / Float(fftLength)
                 
-                // Strict frequency range: 0.4-2.5 Hz (24-150 BPM) - eliminate high harmonics
-                let lowIndex = max(Int(0.4 / freqResolution), 1)
-                let highIndex = min(Int(2.5 / freqResolution), magnitudes.count - 1)
+                // Physiological frequency range: 0.75 Hz (45 BPM) to 3.0 Hz (180 BPM)
+                let lowIndex = max(Int(0.75 / freqResolution), 1)
+                let highIndex = min(Int(3.0 / freqResolution), magnitudes.count - 1)
                 
                 guard lowIndex < highIndex else { return }
                 
-                // Find top 3 peaks
+                // Collect all local peaks in the physiological band
                 var peaks: [(index: Int, magnitude: Float)] = []
-                
                 for i in lowIndex...highIndex {
-                    peaks.append((index: i, magnitude: magnitudes[i]))
+                    let isPeak = (i > lowIndex && i < highIndex) ? 
+                        (magnitudes[i] >= magnitudes[i - 1] && magnitudes[i] >= magnitudes[i + 1]) : true
+                    if isPeak && magnitudes[i] > 0 {
+                        peaks.append((index: i, magnitude: magnitudes[i]))
+                    }
                 }
                 
-                peaks.sort { $0.magnitude > $1.magnitude }
-                let topPeaks = Array(peaks.prefix(3))
+                guard let topPeak = peaks.max(by: { $0.magnitude < $1.magnitude }) else { return }
+                var selectedIndex = topPeak.index
                 
-                guard !topPeaks.isEmpty else { return }
+                let rawFreq = Float(topPeak.index) * freqResolution
+                let rawBPM = rawFreq * 60.0
                 
-                // ULTRA-ROBUST: Use the lowest valid peak (likely fundamental frequency)
-                let bestPeak = topPeaks.min(by: { $0.index < $1.index })!
-                let refinedPeakIndex = refineFrequencyPeak(magnitudes, bestPeak.index)
+                // Anti-doubling harmonic correction:
+                // If top peak is > 100 BPM (e.g., 129, 154 BPM), check if there is a fundamental peak at half frequency (~50-80 BPM)
+                if rawBPM > 100.0 {
+                    let halfIndex = Int(round(Float(topPeak.index) / 2.0))
+                    if let fundPeak = peaks.first(where: { abs($0.index - halfIndex) <= 1 && $0.magnitude >= topPeak.magnitude * 0.20 }) {
+                        print("🔄 FFT: Detected 2nd harmonic at \(Int(round(rawBPM))) BPM, selecting fundamental peak at index \(fundPeak.index)")
+                        selectedIndex = fundPeak.index
+                    }
+                }
+                
+                let refinedPeakIndex = refineFrequencyPeak(magnitudes, selectedIndex)
                 let frequency = refinedPeakIndex * freqResolution
                 bpmResult = Int(round(frequency * 60))
-                
-                // Comprehensive harmonic correction
-                if bpmResult > 140 {
-                    // Check if dividing by 2 gives reasonable result
-                    let halved = bpmResult / 2
-                    if halved >= 45 && halved <= 120 {
-                        print("🔄 ULTRA-FIXED: High harmonic \(bpmResult) → \(halved)")
-                        bpmResult = halved
-                    }
-                } else if bpmResult > 110 && bpmResult < 150 {
-                    // Borderline range - extra check
-                    let halved = bpmResult / 2
-                    if halved >= 55 && halved <= 85 {
-                        print("⚠️ ULTRA-FIXED: Possible harmonic \(bpmResult) → \(halved)")
-                        bpmResult = halved
-                    }
-                }
-                
                 bpmResult = validateAndSmoothBPM(bpmResult)
-                
-                print("📊 FFT - Peak index: \(bestPeak.index), refined: \(String(format: "%.2f", refinedPeakIndex)), freq: \(String(format: "%.2f", frequency)) Hz, magnitude: \(String(format: "%.2f", bestPeak.magnitude))")
             }
         }
         
@@ -1172,144 +1241,170 @@ class PPGCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleB
     }
 
     private func calculateTimeDomainHeartRate(from signal: [Float]) -> Int {
-        guard signal.count >= 50 else { return 0 }
+        let n = signal.count
+        guard n >= 90 else { return 0 }
         
-        let mean = signal.reduce(0, +) / Float(signal.count)
-        let variance = signal.map { pow($0 - mean, 2) }.reduce(0, +) / Float(signal.count)
+        var mean: Float = 0
+        vDSP_meanv(signal, 1, &mean, vDSP_Length(n))
+        
+        var variance: Float = 0
+        let dev = signal.map { ($0 - mean) * ($0 - mean) }
+        vDSP_meanv(dev, 1, &variance, vDSP_Length(n))
         let stdDev = sqrt(variance)
         
-        // Adaptive threshold
-        let threshold = mean + 0.5 * stdDev
+        // Threshold for systolic peak
+        let threshold = mean + 0.30 * stdDev
         
-        var peaks: [Int] = []
-        for i in 1..<(signal.count - 1) {
-            if signal[i] > threshold && signal[i] > signal[i - 1] && signal[i] > signal[i + 1] {
-                if peaks.isEmpty || (i - peaks.last! >= 10) {
-                    peaks.append(i)
-                }
+        // Step 1: Detect all local maxima above threshold
+        var candidatePeaks: [(index: Int, value: Float)] = []
+        for i in 2..<(n - 2) {
+            if signal[i] > threshold && 
+               signal[i] > signal[i - 1] && signal[i] >= signal[i + 1] &&
+               signal[i] > signal[i - 2] && signal[i] >= signal[i + 2] {
+                candidatePeaks.append((index: i, value: signal[i]))
             }
         }
         
-        guard peaks.count >= 3 else { return 0 }
+        guard candidatePeaks.count >= 3 else { return 0 }
         
-        var intervals: [Int] = []
-        for i in 1..<peaks.count {
-            intervals.append(peaks[i] - peaks[i - 1])
+        // Step 2: Dicrotic notch suppression
+        // A dicrotic notch is smaller than the systolic peak and occurs within 16 frames (< 112 BPM).
+        // Suppress any smaller secondary peak that occurs within 16 frames of a dominant peak.
+        var filteredPeaks: [Int] = []
+        var lastPeakIndex = -100
+        var lastPeakValue: Float = -1000
+        
+        for peak in candidatePeaks {
+            if peak.index - lastPeakIndex < 16 {
+                if peak.value > lastPeakValue {
+                    if !filteredPeaks.isEmpty {
+                        filteredPeaks.removeLast()
+                    }
+                    filteredPeaks.append(peak.index)
+                    lastPeakIndex = peak.index
+                    lastPeakValue = peak.value
+                }
+            } else {
+                filteredPeaks.append(peak.index)
+                lastPeakIndex = peak.index
+                lastPeakValue = peak.value
+            }
         }
         
-        let avgInterval = Float(intervals.reduce(0, +)) / Float(intervals.count)
-        let bpm = Int(round(30.0 * 60.0 / avgInterval))
+        guard filteredPeaks.count >= 3 else { return 0 }
         
-        print("⏱️ Time domain - \(peaks.count) peaks, avg interval: \(String(format: "%.1f", avgInterval)) frames = \(bpm) BPM")
+        var intervals: [Float] = []
+        for i in 1..<filteredPeaks.count {
+            let diff = Float(filteredPeaks[i] - filteredPeaks[i - 1])
+            // Plausible beat-to-beat intervals: 13 frames (138 BPM) to 42 frames (43 BPM)
+            if diff >= 13 && diff <= 42 {
+                intervals.append(diff)
+            }
+        }
         
-        return bpm
+        guard intervals.count >= 2 else { return 0 }
+        
+        let sortedIntervals = intervals.sorted()
+        let medianInterval = sortedIntervals[sortedIntervals.count / 2]
+        
+        let bpm = Int(round(30.0 * 60.0 / medianInterval))
+        print("⏱️ Time domain - \(filteredPeaks.count) peaks, median interval: \(String(format: "%.1f", medianInterval)) frames = \(bpm) BPM")
+        return (bpm >= 45 && bpm <= 180) ? bpm : 0
     }
 
     private func performAutocorrelationAnalysis(_ signal: [Float]) -> Int {
         let n = signal.count
-        guard n >= 100 else { return 0 }
+        guard n >= 90 else { return 0 }
         
-        let minLag = 10
-        let maxLag = 200
+        // At 30 FPS:
+        // Lag 13 = 138 BPM
+        // Lag 42 = 43 BPM
+        let minLag = 13
+        let maxLag = min(42, n / 2)
+        guard maxLag > minLag else { return 0 }
         
-        var maxAutoCorr: Float = 0
-        var bestLag = minLag
-        
-        let normalizer = signal.map { $0 * $0 }.reduce(0, +)
+        var normalizer: Float = 0
+        vDSP_dotpr(signal, 1, signal, 1, &normalizer, vDSP_Length(n))
         guard normalizer > 0 else { return 0 }
         
-        for lag in minLag..<maxLag {
+        var autocorr = [Float](repeating: 0, count: maxLag + 1)
+        for lag in minLag...maxLag {
             var sum: Float = 0
-            for i in 0..<(n - lag) {
-                sum += signal[i] * signal[i + lag]
+            let len = vDSP_Length(n - lag)
+            signal.withUnsafeBufferPointer { ptr in
+                guard let base = ptr.baseAddress else { return }
+                vDSP_dotpr(base, 1, base.advanced(by: lag), 1, &sum, len)
             }
-            let autocorr = sum / normalizer
-            
-            if autocorr > maxAutoCorr {
-                maxAutoCorr = autocorr
-                bestLag = lag
+            autocorr[lag] = sum / normalizer
+        }
+        
+        // Find local correlation peaks
+        var peaks: [(lag: Int, corr: Float)] = []
+        for lag in (minLag + 1)..<maxLag {
+            if autocorr[lag] > autocorr[lag - 1] && autocorr[lag] >= autocorr[lag + 1] && autocorr[lag] > 0.15 {
+                peaks.append((lag: lag, corr: autocorr[lag]))
             }
         }
         
-        guard maxAutoCorr > 0.3 else { return 0 }
+        guard !peaks.isEmpty else { return 0 }
         
-        let bpm = Int(round(30.0 * 60.0 / Float(bestLag)))
-        print("🔄 Autocorrelation - lag: \(bestLag), correlation: \(String(format: "%.2f", maxAutoCorr)) = \(bpm) BPM")
+        let bestPeak = peaks.max(by: { $0.corr < $1.corr })!
+        var chosenLag = bestPeak.lag
         
-        return bpm
+        // Anti-doubling: if chosenLag is fast (< 18 frames, i.e. > 100 BPM),
+        // check if there is a fundamental period peak around 2 * chosenLag
+        if chosenLag < 18 {
+            let doubleLag = chosenLag * 2
+            if let fundPeak = peaks.first(where: { abs($0.lag - doubleLag) <= 2 && $0.corr >= bestPeak.corr * 0.40 }) {
+                print("🔄 Autocorr: detected subharmonic lag \(chosenLag), selecting fundamental lag \(fundPeak.lag)")
+                chosenLag = fundPeak.lag
+            }
+        }
+        
+        let bpm = Int(round(30.0 * 60.0 / Float(chosenLag)))
+        print("🔄 Autocorrelation - lag: \(chosenLag), correlation: \(String(format: "%.2f", bestPeak.corr)) = \(bpm) BPM")
+        return (bpm >= 45 && bpm <= 180) ? bpm : 0
     }
 
     private func selectBestMethodRobust(fft: Int, timeDomain: Int, autocorr: Int) -> Int {
-        print("🤔 Selecting best method from FFT:\(fft), TD:\(timeDomain), AC:\(autocorr)")
+        var values = [fft, timeDomain, autocorr].filter { $0 >= 45 && $0 <= 180 }
+        guard !values.isEmpty else { return 0 }
         
-        // Normalize values for comparison
-        let validFFT = (fft >= 45 && fft <= 180)
-        let validTD = (timeDomain >= 45 && timeDomain <= 180)
-        let validAC = (autocorr >= 45 && autocorr <= 180)
-        
-        // Count valid methods
-        let validCount = (validFFT ? 1 : 0) + (validTD ? 1 : 0) + (validAC ? 1 : 0)
-        
-        // If no valid methods, return safe value
-        guard validCount > 0 else {
-            print("⚠️ No valid methods!")
-            return 0
-        }
-        
-        // If only one valid method, use it
-        if validCount == 1 {
-            if validTD {
-                print("✅ Only TD valid: \(timeDomain)")
-                return timeDomain
-            }
-            if validFFT {
-                print("✅ Only FFT valid: \(fft)")
-                return fft
-            }
-            if validAC {
-                print("✅ Only AC valid: \(autocorr)")
-                return autocorr
+        // Harmonic reconciliation: if any method produced double (~2x) of another, normalize it down
+        for i in 0..<values.count {
+            for j in 0..<values.count {
+                if i != j && values[i] > 100 {
+                    let halved = values[i] / 2
+                    if abs(halved - values[j]) <= 6 {
+                        print("🔄 Harmonically reconciling doubled reading \(values[i]) -> \(halved) to match \(values[j])")
+                        values[i] = halved
+                    }
+                }
             }
         }
         
-        // ULTRA-ROBUST: Multiple valid methods - use consensus
-        var results: [Int] = []
-        if validFFT { results.append(fft) }
-        if validTD { results.append(timeDomain) }
-        if validAC { results.append(autocorr) }
+        if values.count == 1 { return values[0] }
         
-        // Sort and find median
-        results.sort()
-        let median = results[results.count / 2]
-        
-        // Check agreement
-        let minVal = results.min() ?? 0
-        let maxVal = results.max() ?? 0
-        let spread = maxVal - minVal
-        
-        if spread <= 15 {
-            // Good agreement
-            print("✅ Methods agree (spread: \(spread)): \(median) BPM")
-            return median
-        } else if spread <= 25 {
-            // Acceptable agreement - use median
-            print("⚠️ Methods partially agree (spread: \(spread)), using median: \(median) BPM")
-            return median
-        } else {
-            // Poor agreement - use time domain (most reliable)
-            if validTD {
-                print("❌ Poor agreement (spread: \(spread)), trusting Time Domain: \(timeDomain)")
-                return timeDomain
-            } else {
-                print("❌ Poor agreement (spread: \(spread)), using median: \(median)")
-                return median
+        // Check pairwise closeness within 8 BPM
+        for i in 0..<values.count {
+            for j in (i + 1)..<values.count {
+                if abs(values[i] - values[j]) <= 8 {
+                    let avg = (values[i] + values[j]) / 2
+                    print("✅ Consensus BPM: \(avg)")
+                    return avg
+                }
             }
         }
+        
+        let sorted = values.sorted()
+        let median = sorted[sorted.count / 2]
+        print("ℹ️ Median of valid methods: \(median) BPM")
+        return median
     }
 
     private func validateAndSmoothBPM(_ bpm: Int) -> Int {
         let minValid = 45
-        let maxValid = 180
+        let maxValid = 195
         
         guard bpm >= minValid && bpm <= maxValid else {
             print("⚠️ BPM \(bpm) invalid, returning 0")
@@ -1383,12 +1478,14 @@ struct PPGCameraView: UIViewControllerRepresentable {
     var onBPMDetected: (Int) -> Void
     var onFingerDetected: (Bool) -> Void
     var onFingerPlacementQuality: (Float) -> Void
+    var onControllerReady: ((PPGCameraViewController) -> Void)? = nil
     
     func makeUIViewController(context: Context) -> PPGCameraViewController {
         let vc = PPGCameraViewController()
         vc.onBPMDetected = onBPMDetected
         vc.onFingerDetected = onFingerDetected
         vc.onFingerPlacementQuality = onFingerPlacementQuality
+        onControllerReady?(vc)
         return vc
     }
     
@@ -2212,11 +2309,7 @@ struct HRCheckView: View {
             }
         }
         .padding(24)
-        .background(
-            RoundedRectangle(cornerRadius: 24)
-                .fill(Color.cardBackground)
-                .shadow(color: Color.cardShadow, radius: 20, x: 0, y: 10)
-        )
+        .glossyCard(cornerRadius: 24)
         .padding(.horizontal, 20)
     }
     
@@ -2743,15 +2836,17 @@ struct FixedMeasurementView: View {
     
     @State private var timer: Timer?
     @State private var ppgView: PPGCameraView?
+    @State private var ppgController: PPGCameraViewController?
+    @State private var consecutiveLostFrames: Int = 0
     @State private var fingerDetectionTimer: Timer?
     @State private var fingerNotDetectedCount = 0
     @State private var cameraPermissionDenied = false
     @State private var flashStatus = "Flash: OFF"
     
-    // FIXED: More generous 20-second finger timeout
+    // 20-second finger timeout
     @State private var noFingerTimeout: Timer?
     @State private var noFingerElapsedTime: Int = 0
-    @State private var maxWaitTime: Int = 20  // Increased from 15 to 20 seconds
+    @State private var maxWaitTime: Int = 20
     @State private var isWaitingForFinger = true
     @State private var hasFingerBeenDetected = false
     @State private var showExtendedWaitMessage = false
@@ -2762,16 +2857,16 @@ struct FixedMeasurementView: View {
     @Environment(\.dismiss) private var dismiss
     
     private var qualityColor: Color {
-        if fingerPlacementQuality > 0.7 { return .green }
-        else if fingerPlacementQuality > 0.25 { return .orange }  // Lowered from 0.4 to 0.25 for better sensitivity
+        if fingerPlacementQuality > 0.6 { return .green }
+        else if fingerPlacementQuality > 0.2 { return .orange }
         else { return .red }
     }
     
     private var qualityText: String {
-        if fingerPlacementQuality > 0.7 { return "🎯 Perfect Placement!" }
-        else if fingerPlacementQuality > 0.25 { return "👍 Good Placement" }  // Lowered threshold
+        if fingerPlacementQuality > 0.6 { return "🎯 Perfect Placement!" }
+        else if fingerPlacementQuality > 0.2 { return "👍 Good Placement" }
         else if fingerDetected { return "👆 Adjust Position" }
-        else { return "🔦 FIXED: Place Finger on Camera & Flash" }
+        else { return "🔦 Place Finger on Camera & Flash" }
     }
     
     var body: some View {
@@ -2792,16 +2887,19 @@ struct FixedMeasurementView: View {
             }
         }
         .onAppear {
-            print("🎬 FIXED MeasurementView appeared")
+            print("🎬 FixedMeasurementView appeared")
             checkCameraPermissionAndStart()
             animateGradient = true
         }
         .onDisappear {
-            print("🎬 FIXED MeasurementView disappeared")
+            print("🎬 FixedMeasurementView disappeared")
             cleanupMeasurement()
         }
-        .onChange(of: fingerDetected) { _, newValue in
-            handleFingerDetectionChange(newValue)
+        .onChange(of: fingerDetected) { _, _ in
+            evaluateFingerPlacement()
+        }
+        .onChange(of: fingerPlacementQuality) { _, _ in
+            evaluateFingerPlacement()
         }
     }
     
@@ -3061,9 +3159,9 @@ struct FixedMeasurementView: View {
     // Enhanced: Better finger placement guide
     private var enhancedFingerPlacementGuide: some View {
         VStack(spacing: 20) {
-            Text(fingerDetected && fingerPlacementQuality > 0.25 ?  // Lowered from 0.5 to 0.25
-                "🎯 FIXED: Good placement! Hold steady while we measure..." :
-                "📱 FIXED: Place your fingertip over BOTH camera and flash")
+            Text(fingerDetected && fingerPlacementQuality >= 0.20 ?
+                "🎯 Good placement! Hold steady while we measure..." :
+                "📱 Place your fingertip over BOTH camera and flash")
                 .font(.system(.title3, design: .rounded).weight(.semibold))
                 .foregroundColor(.white)
                 .multilineTextAlignment(.center)
@@ -3228,9 +3326,9 @@ struct FixedMeasurementView: View {
         }
     }
     
-    // FIXED: 20-second measurement start logic
+    // 20-second measurement start logic
     private func startMeasurement() {
-        print("🚀 Starting FIXED measurement with 20-second finger timeout")
+        print("🚀 Starting measurement with 20-second finger timeout")
         measurementStarted = true
         flashStatus = "Flash: STARTING..."
         isWaitingForFinger = true
@@ -3242,7 +3340,7 @@ struct FixedMeasurementView: View {
         ppgView = PPGCameraView(
             onBPMDetected: { bpm in
                 DispatchQueue.main.async {
-                    print("✅ FIXED BPM detected: \(bpm)")
+                    print("✅ BPM detected: \(bpm)")
                     onComplete(.success(bpm))
                     cleanupMeasurement()
                     dismiss()
@@ -3250,73 +3348,71 @@ struct FixedMeasurementView: View {
             },
             onFingerDetected: { detected in
                 DispatchQueue.main.async {
-                    print("👆 FIXED finger detected: \(detected)")
                     fingerDetected = detected
-                    
                     if detected {
                         hasFingerBeenDetected = true
-                    }
-                    
-                    flashStatus = detected ? "Flash: ON ✅" : "Flash: ON (waiting)"
-                    
-                    if detected {
                         resetNoFingerTimeout()
                     }
+                    flashStatus = detected ? "Flash: ON ✅" : "Flash: ON (waiting)"
                 }
             },
             onFingerPlacementQuality: { quality in
                 DispatchQueue.main.async {
                     fingerPlacementQuality = quality
                 }
+            },
+            onControllerReady: { controller in
+                DispatchQueue.main.async {
+                    self.ppgController = controller
+                }
             }
         )
         
-        // FIXED: Give more time for camera setup
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { // Increased from 4 to 5 seconds
-            print("📸 FIXED camera should be ready, starting timeout")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            print("📸 Camera should be ready, starting timeout")
             flashStatus = "Flash: ON ✅"
             cameraReady = true
             startNoFingerTimeout()
         }
     }
     
-    // FIXED: 20-second timeout logic
+    // 20-second timeout logic
     private func startNoFingerTimeout() {
         guard measurementStarted && cameraReady else {
-            print("⚠️ Not starting FIXED timeout - measurement not ready")
+            print("⚠️ Not starting timeout - measurement not ready")
             return
         }
         
-        print("⏰ Starting FIXED 20-second finger detection timeout")
+        print("⏰ Starting 20-second finger detection timeout")
         noFingerTimeout?.invalidate()
         
         noFingerTimeout = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             guard measurementStarted else {
-                print("⚠️ Stopping FIXED timeout - measurement no longer active")
                 stopNoFingerTimeout()
                 return
             }
             
-            noFingerElapsedTime += 1
-            print("⏱️ FIXED no finger timeout: \(noFingerElapsedTime)/\(maxWaitTime) - fingerDetected: \(hasFingerBeenDetected)")
-            
-            // Show extended message after 8 seconds (adjusted for 20-second timeout)
-            if noFingerElapsedTime == 8 && !hasFingerBeenDetected {
-                showExtendedWaitMessage = true
-                print("💬 Showing FIXED extended wait message")
+            // If finger is currently detected, keep resetting timeout
+            if fingerDetected {
+                noFingerElapsedTime = 0
+                return
             }
             
-            // Only exit after full 20 seconds without proper finger detection
+            noFingerElapsedTime += 1
+            print("⏱️ No finger timeout: \(noFingerElapsedTime)/\(maxWaitTime) - fingerDetected: \(hasFingerBeenDetected)")
+            
+            if noFingerElapsedTime == 8 && !hasFingerBeenDetected {
+                showExtendedWaitMessage = true
+            }
+            
             if noFingerElapsedTime >= maxWaitTime {
                 if !hasFingerBeenDetected {
-                    print("❌ FIXED no finger detected within 20 seconds - exiting")
+                    print("❌ No finger detected within 20 seconds - exiting")
                     DispatchQueue.main.async {
                         onComplete(.noFingerDetected)
                         cleanupMeasurement()
                         dismiss()
                     }
-                } else {
-                    print("✅ FIXED finger was detected, continuing measurement")
                 }
                 stopNoFingerTimeout()
             }
@@ -3324,81 +3420,112 @@ struct FixedMeasurementView: View {
     }
     
     private func stopNoFingerTimeout() {
-        print("🛑 Stopping FIXED no finger timeout")
+        print("🛑 Stopping no finger timeout")
         noFingerTimeout?.invalidate()
         noFingerTimeout = nil
     }
     
     private func resetNoFingerTimeout() {
-        print("🔄 Resetting FIXED no finger timeout")
         noFingerElapsedTime = 0
         showExtendedWaitMessage = false
     }
     
-    // FIXED: Much more lenient finger detection handling
-    private func handleFingerDetectionChange(_ newValue: Bool) {
-        print("🔄 FIXED finger detection changed: \(newValue), quality: \(fingerPlacementQuality)")
+    // Robust finger placement evaluation combining presence and quality
+    private func evaluateFingerPlacement() {
+        print("🔄 Finger state: detected=\(fingerDetected), quality=\(fingerPlacementQuality)")
         
-        if newValue {
+        if fingerDetected && fingerPlacementQuality >= 0.20 {
+            consecutiveLostFrames = 0
             hasFingerBeenDetected = true
-        }
-        
-        // FIXED: Much more lenient quality threshold (0.25 instead of 0.5)
-        if newValue && fingerPlacementQuality > 0.25 {
-            print("✅ FIXED good finger placement detected, starting countdown")
-            fingerNotDetectedCount = 0
             isWaitingForFinger = false
             
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                 fingerOverCamera = true
             }
             
-            startCountdown()
-            stopNoFingerTimeout() // Stop timeout when measurement actually starts
+            if measurementTimer == nil {
+                startCountdown()
+            }
+            stopNoFingerTimeout()
         } else {
-            print("⚠️ FIXED poor finger placement or no finger, stopping countdown")
-            stopCountdown()
-            isWaitingForFinger = true
-            
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                fingerOverCamera = false
+            consecutiveLostFrames += 1
+            // Debounce: don't immediately reset countdown on a single momentary dropped frame
+            if consecutiveLostFrames > 20 { // ~0.66 seconds of missing finger
+                pauseCountdown()
+                isWaitingForFinger = true
+                
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                    fingerOverCamera = false
+                }
             }
         }
     }
     
-    // FIXED: Proper countdown timer with smooth animation
+    // Proper countdown timer with smooth animation and final calculation trigger
     private func startCountdown() {
-        print("🎬 Starting FIXED 15-second countdown...")
-        countdown = 15
-        totalMeasurementTime = 0.0
-        timerProgress = 0.0
+        print("🎬 Starting/Resuming 15-second countdown... remaining: \(countdown)s")
+        measurementTimer?.invalidate()
         
-        // Calculate the increment per second for smooth animation
         let progressIncrement = 1.0 / 15.0
         
         measurementTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
-            guard countdown > 0 else {
-                print("🏁 Countdown finished!")
+            if countdown > 0 {
+                countdown -= 1
+                totalMeasurementTime += 1.0
+                
+                withAnimation(.linear(duration: 1.0)) {
+                    timerProgress = min(timerProgress + progressIncrement, 1.0)
+                }
+                
+                progress = 1.0 - CGFloat(countdown) / 15.0
+                print("⏱️ Countdown: \(countdown)s - progress: \(Int(timerProgress * 100))%")
+            }
+            
+            if countdown <= 0 {
+                print("🏁 Countdown finished! Requesting final BPM from camera...")
                 timer.invalidate()
                 measurementTimer = nil
-                return
+                
+                // Finish measurement and calculate final BPM from accumulated buffer
+                if let controller = ppgController {
+                    let bpm = controller.finishMeasurementAndDeliver()
+                    if bpm >= 45 && bpm <= 195 {
+                        DispatchQueue.main.async {
+                            onComplete(.success(bpm))
+                            cleanupMeasurement()
+                            dismiss()
+                        }
+                        return
+                    }
+                }
+                
+                // Fallback check after brief buffer flush
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    if let controller = ppgController {
+                        let bpm = controller.finishMeasurementAndDeliver()
+                        if bpm >= 45 && bpm <= 195 {
+                            onComplete(.success(bpm))
+                        } else {
+                            onComplete(.noFingerDetected)
+                        }
+                    } else {
+                        onComplete(.timeout)
+                    }
+                    cleanupMeasurement()
+                    dismiss()
+                }
             }
-            
-            countdown -= 1
-            totalMeasurementTime += 1.0
-            
-            // Update progress with animation
-            withAnimation(.linear(duration: 1.0)) {
-                timerProgress = min(timerProgress + progressIncrement, 1.0)
-            }
-            
-            progress = 1.0 - CGFloat(countdown) / 15.0
-            print("⏱️ FIXED countdown: \(countdown)s - progress: \(Int(timerProgress * 100))%")
         }
     }
     
+    private func pauseCountdown() {
+        print("⏸️ Pausing countdown at \(countdown)s")
+        measurementTimer?.invalidate()
+        measurementTimer = nil
+    }
+    
     private func stopCountdown() {
-        print("Stopping countdown...")
+        print("🛑 Stopping countdown and resetting...")
         measurementTimer?.invalidate()
         measurementTimer = nil
         timerProgress = 0
@@ -3408,7 +3535,7 @@ struct FixedMeasurementView: View {
     }
     
     private func cleanupMeasurement() {
-        print("Cleaning up FIXED measurement resources")
+        print("Cleaning up measurement resources")
         // Stop all timers
         timer?.invalidate()
         timer = nil
@@ -3428,7 +3555,8 @@ struct FixedMeasurementView: View {
         timerProgress = 0
         totalMeasurementTime = 0
         
-        // Clean up PPG view
+        // Clean up PPG view & controller
+        ppgController = nil
         ppgView = nil
     }
 }

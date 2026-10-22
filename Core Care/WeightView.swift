@@ -5,6 +5,7 @@ struct WeightView: View {
     @AppStorage("userId") private var userId: Int = 0
     @AppStorage("userName") private var userName: String = "User"
 
+    var onDismiss: (() -> Void)? = nil
     var onSave: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
@@ -200,10 +201,12 @@ struct WeightView: View {
             }
         }
         .onAppear {
+            loadSavedData()
             withAnimation {
                 animateCards = true
                 floatingOffset = 30
             }
+            fetchLatestFromBackend()
         }
     }
 
@@ -214,8 +217,13 @@ struct WeightView: View {
         HStack(spacing: 12) {
             // Back button: LEFTMOST position
             Button {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                    goToHome = true
+                if let onDismiss = onDismiss {
+                    onDismiss()
+                } else {
+                    dismiss()
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                        goToHome = true
+                    }
                 }
             } label: {
                 ZStack {
@@ -356,15 +364,16 @@ struct WeightView: View {
                                 lineWidth: weightError ? 2 : 1
                             )
                     )
-                    .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 4)
-                    .shadow(color: .white.opacity(0.9), radius: 1, x: 0, y: -1)
+                    .shadow(color: Color.cardShadow, radius: 8, x: 0, y: 4)
                 
                 HStack {
                     TextField("0.0", text: $weight)
                         .keyboardType(.decimalPad)
                         .font(.system(size: geo.size.width * 0.05, weight: .semibold, design: .rounded))
                         .foregroundColor(.primary)
-                        .disabled(dataSaved)
+                        .onChange(of: weight) { _, _ in
+                            dataSaved = false
+                        }
                     
                     Spacer()
                     
@@ -436,15 +445,16 @@ struct WeightView: View {
                                 lineWidth: heightError ? 2 : 1
                             )
                     )
-                    .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 4)
-                    .shadow(color: .white.opacity(0.9), radius: 1, x: 0, y: -1)
+                    .shadow(color: Color.cardShadow, radius: 8, x: 0, y: 4)
                 
                 HStack {
                     TextField("0.0", text: $height)
                         .keyboardType(.decimalPad)
                         .font(.system(size: geo.size.width * 0.05, weight: .semibold, design: .rounded))
                         .foregroundColor(.primary)
-                        .disabled(dataSaved)
+                        .onChange(of: height) { _, _ in
+                            dataSaved = false
+                        }
                     
                     Spacer()
                     
@@ -469,14 +479,16 @@ struct WeightView: View {
     // MARK: Modern 3D Button
     private func calculateButton(geo: GeometryProxy) -> some View {
         Button {
-            if !dataSaved {
-                if validateFields() {
-                    calculateBMI()
-                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                        showSuggestions = true
-                    }
-                    submitToBackend()
+            if validateFields() {
+                calculateBMI()
+                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                    showSuggestions = true
+                    dataSaved = true
                 }
+                let impact = UIImpactFeedbackGenerator(style: .medium)
+                impact.impactOccurred()
+                saveToUserDefaults()
+                submitToBackend()
             }
         } label: {
             ZStack {
@@ -521,7 +533,7 @@ struct WeightView: View {
                     Image(systemName: dataSaved ? "checkmark.circle.fill" : "heart.text.square.fill")
                         .font(.system(size: 22, weight: .bold))
                     
-                    Text(dataSaved ? "Data Saved Successfully!" : "Calculate BMI & Save")
+                    Text(dataSaved ? "Recalculate & Save" : "Calculate BMI & Save")
                         .font(.system(size: geo.size.width * 0.042, weight: .bold, design: .rounded))
                 }
                 .foregroundColor(.white)
@@ -531,7 +543,6 @@ struct WeightView: View {
             .frame(height: 60)
         }
         .buttonStyle(Modern3DButtonStyle())
-        .disabled(dataSaved)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: dataSaved)
     }
 
@@ -744,16 +755,109 @@ struct WeightView: View {
         .shadow(color: .purple.opacity(0.3), radius: 20, x: 0, y: 10)
     }
     
-    // Reset and other functions remain the same...
+    // Reset and other functions
     private func resetForm() {
-        dataSaved = false
-        showSuggestions = false
-        bmi = nil
-        bmiCategory = ""
-        weight = ""
-        height = ""
-        weightError = false
-        heightError = false
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            dataSaved = false
+            showSuggestions = false
+            bmi = nil
+            bmiCategory = ""
+            weight = ""
+            height = ""
+            weightError = false
+            heightError = false
+        }
+        let uId = currentUserId
+        UserDefaults.standard.removeObject(forKey: "saved_weight_\(uId)")
+        UserDefaults.standard.removeObject(forKey: "saved_height_\(uId)")
+        UserDefaults.standard.removeObject(forKey: "saved_bmi_\(uId)")
+        UserDefaults.standard.removeObject(forKey: "saved_bmi_category_\(uId)")
+        UserDefaults.standard.removeObject(forKey: "saved_weight")
+        UserDefaults.standard.removeObject(forKey: "saved_height")
+        UserDefaults.standard.removeObject(forKey: "saved_bmi")
+        UserDefaults.standard.removeObject(forKey: "saved_bmi_category")
+        NotificationCenter.default.post(name: NSNotification.Name("WeightUpdated"), object: nil)
+    }
+
+    private func saveToUserDefaults() {
+        let uId = currentUserId
+        UserDefaults.standard.set(weight, forKey: "saved_weight_\(uId)")
+        UserDefaults.standard.set(height, forKey: "saved_height_\(uId)")
+        if let b = bmi {
+            UserDefaults.standard.set(b, forKey: "saved_bmi_\(uId)")
+            UserDefaults.standard.set(b, forKey: "saved_bmi")
+        }
+        UserDefaults.standard.set(bmiCategory, forKey: "saved_bmi_category_\(uId)")
+        
+        UserDefaults.standard.set(weight, forKey: "saved_weight")
+        UserDefaults.standard.set(height, forKey: "saved_height")
+        UserDefaults.standard.set(bmiCategory, forKey: "saved_bmi_category")
+        
+        NotificationCenter.default.post(name: NSNotification.Name("WeightUpdated"), object: nil)
+    }
+
+    private func loadSavedData() {
+        let uId = currentUserId
+        let savedW = UserDefaults.standard.string(forKey: "saved_weight_\(uId)") ?? UserDefaults.standard.string(forKey: "saved_weight")
+        let savedH = UserDefaults.standard.string(forKey: "saved_height_\(uId)") ?? UserDefaults.standard.string(forKey: "saved_height")
+        
+        if let w = savedW, !w.isEmpty {
+            self.weight = w
+        }
+        if let h = savedH, !h.isEmpty {
+            self.height = h
+        }
+        
+        if let wStr = savedW, let hStr = savedH,
+           let wVal = Double(wStr), let hVal = Double(hStr), hVal > 0 {
+            let heightM = hVal / 100
+            let computed = wVal / (heightM * heightM)
+            self.bmi = computed
+            self.bmiCategory = categorizeBMI(computed)
+            self.showSuggestions = true
+            self.dataSaved = true
+        } else {
+            let savedBMI = UserDefaults.standard.double(forKey: "saved_bmi_\(uId)")
+            if savedBMI > 0 {
+                self.bmi = savedBMI
+                self.bmiCategory = UserDefaults.standard.string(forKey: "saved_bmi_category_\(uId)") ?? categorizeBMI(savedBMI)
+                self.showSuggestions = true
+                self.dataSaved = true
+            }
+        }
+    }
+
+    private func fetchLatestFromBackend() {
+        guard currentUserId > 0,
+              let url = URL(string: "http://14.139.187.229:8081/PDD-2025(9thmonth)/corecare/weight.php?user_id=\(currentUserId)") else {
+            return
+        }
+        
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            guard let data = data, error == nil else { return }
+            
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let status = json["status"] as? String,
+               status.lowercased() == "success",
+               let weightData = json["data"] as? [String: Any] {
+                
+                DispatchQueue.main.async {
+                    if let w = weightData["weight"] as? Double, self.weight.isEmpty {
+                        self.weight = String(format: "%.1f", w)
+                    }
+                    if let h = weightData["height"] as? Double, self.height.isEmpty {
+                        self.height = String(format: "%.1f", h)
+                    }
+                    if let b = weightData["bmi"] as? Double {
+                        self.bmi = b
+                        self.bmiCategory = weightData["bmi_category"] as? String ?? self.categorizeBMI(b)
+                        self.showSuggestions = true
+                        self.dataSaved = true
+                        self.saveToUserDefaults()
+                    }
+                }
+            }
+        }.resume()
     }
 
     // MARK: Dynamic Suggestions Logic (unchanged)
@@ -803,8 +907,10 @@ struct WeightView: View {
     private func calculateBMI() {
         guard let w = Double(weight), let h = Double(height), h > 0 else { return }
         let heightMeters = h / 100
-        bmi = w / (heightMeters * heightMeters)
-        bmiCategory = categorizeBMI(bmi!)
+        let computedBMI = w / (heightMeters * heightMeters)
+        bmi = computedBMI
+        bmiCategory = categorizeBMI(computedBMI)
+        saveToUserDefaults()
     }
 
     private func categorizeBMI(_ bmi: Double) -> String {

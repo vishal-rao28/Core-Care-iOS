@@ -154,6 +154,7 @@ struct HomePageView: View {
 
                             homeContentView(geo: geo)
                         }
+                        .ignoresSafeArea()
                         .tabItem {
                             Label("Home", systemImage: "house.fill")
                         }
@@ -183,6 +184,7 @@ struct HomePageView: View {
                 }
             }
         }
+        .ignoresSafeArea()
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
@@ -199,6 +201,9 @@ struct HomePageView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("MoodEntryAdded"))) { _ in
             loadLatestMoodEntry()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("WeightUpdated"))) { _ in
+            loadLatestWeight()
         }
         .alert("Error", isPresented: $showError) {
             Button("OK") { }
@@ -224,7 +229,11 @@ struct HomePageView: View {
                 )
 
         case .weight:
-            WeightView()
+            WeightView(onDismiss: {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    currentPage = .home
+                }
+            })
                 .environmentObject(userManager)
                 .transition(
                     .asymmetric(
@@ -293,14 +302,12 @@ struct HomePageView: View {
                             .id("quickcheck")
                         healthMetricsGrid(geo: geo)
                             .id("metrics")
-                        appleHealthSection(geo: geo)
-                            .id("applehealth")
                         aiAssistantSection(geo: geo)
                             .id("ai")
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 14)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, 110 + geo.safeAreaInsets.bottom)
                 }
                 .background(
                     GeometryReader { geometry in
@@ -322,15 +329,15 @@ struct HomePageView: View {
     private func headerView(geo: GeometryProxy) -> some View {
         let headerOpacity = min(1.0, max(0.3, 1.0 - (scrollOffset / -100)))
         return HStack {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Welcome back,")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: 16, weight: .regular))
                     .foregroundColor(textSecondary)
                     .opacity(headerOpacity)
                 Text(userName)
-                    .font(.system(size: 28, weight: .bold))
+                    .font(.system(size: 24, weight: .bold))
                     .foregroundColor(textPrimary)
-                    .scaleEffect(0.9 + (headerOpacity * 0.1))
+                    .scaleEffect(0.9 + (headerOpacity * 0.1), anchor: .leading)
 
             }
             Spacer()
@@ -341,7 +348,13 @@ struct HomePageView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(surfaceColor)
+                        .fill(
+                            LinearGradient(
+                                gradient: Gradient(colors: [accentColor, accentColor.opacity(0.8)]),
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
                         .frame(width: 50, height: 50)
                         .shadow(color: accentColor.opacity(0.2), radius: 8, x: 0, y: 4)
 
@@ -354,19 +367,20 @@ struct HomePageView: View {
                             .clipShape(Circle())
                     } else {
                         Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 24, weight: .medium))
-                            .foregroundColor(accentColor)
+                            .font(.system(size: 24))
+                            .foregroundColor(.white)
                     }
                 }
                 .scaleEffect(headerOpacity)
             }
             .buttonStyle(BouncyButtonStyle())
         }
-        .padding(.horizontal, 24)
-        .padding(.top, max(geo.safeAreaInsets.top, 44) + 12)
-        .padding(.bottom, 14)
+        .padding(.horizontal, 20)
+        .padding(.top, max(geo.safeAreaInsets.top, 44) + 8)
+        .padding(.bottom, 20)
         .background(
-            surfaceColor.opacity(0.95)
+            secondaryColor
+                .opacity(scrollOffset < -50 ? 0.95 : 1.0)
                 .blur(radius: scrollOffset < -50 ? 10 : 0)
         )
     }
@@ -589,72 +603,12 @@ struct HomePageView: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, minHeight: 160, alignment: .topLeading)
-            .background(Color.cardBackground)
-            .cornerRadius(18)
-            .shadow(color: Color.cardShadow, radius: 12, x: 0, y: 6)
+            .glossyCard(cornerRadius: 18, borderTint: color.opacity(0.5))
         }
         .buttonStyle(CardButtonStyle())
     }
 
-    // MARK: - Apple Health Data Section (Display Only)
-    private func appleHealthSection(geo: GeometryProxy) -> some View {
-        VStack(spacing: 16) {
-            HStack {
-                Text("Apple Health")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundColor(textPrimary)
-                Spacer()
-            }
 
-            NavigationLink(destination: AppleView()) {
-                HStack(spacing: 16) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.green.opacity(0.15))
-                            .frame(width: 50, height: 50)
-                        Image(systemName: "figure.walk")
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundColor(.green)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("\(healthManager.todayStepCount)")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundColor(textPrimary)
-                            Text("steps today")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(textSecondary)
-                        }
-
-                        HStack {
-                            Image(systemName: "bed.double.fill")
-                                .font(.system(size: 14))
-                                .foregroundColor(.blue)
-                            Text("Sleep: \(String(format: "%.1f", healthManager.lastSleepHours)) hours")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(textSecondary)
-                        }
-                    }
-
-                    Spacer()
-
-                    VStack(spacing: 2) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.statusSuccess)
-
-                        Text("Synced")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.statusSuccess)
-                    }
-                }
-                .padding(20)
-                .adaptiveCard()
-            }
-             // removes blue link highlight
-        }
-    }
 
 
     // MARK: - Enhanced AI Assistant Section
@@ -815,6 +769,17 @@ struct HomePageView: View {
 
     // MARK: - Load Latest Weight
     func loadLatestWeight() {
+        if let savedWeight = UserDefaults.standard.string(forKey: "saved_weight_\(currentUserId)") ?? UserDefaults.standard.string(forKey: "saved_weight"), !savedWeight.isEmpty {
+            if let wVal = Double(savedWeight) {
+                self.weight = "\(Int(wVal)) KGS"
+            } else {
+                self.weight = "\(savedWeight) KGS"
+            }
+            if let savedCat = UserDefaults.standard.string(forKey: "saved_bmi_category_\(currentUserId)") ?? UserDefaults.standard.string(forKey: "saved_bmi_category") {
+                self.bmiCategory = "BMI: \(savedCat)"
+            }
+        }
+        
         guard currentUserId > 0,
               let url = URL(string: "http://14.139.187.229:8081/PDD-2025(9thmonth)/corecare/weight.php?user_id=\(currentUserId)") else {
             print("Invalid userId or URL for weight")

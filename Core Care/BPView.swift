@@ -298,25 +298,7 @@ struct BPView: View {
         }
         .padding(screenWidth * 0.06)
         .frame(maxWidth: .infinity)
-        .background {
-            RoundedRectangle(cornerRadius: 20)
-                .fill(.ultraThinMaterial)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.5),
-                                    Color.white.opacity(0.1)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                }
-        }
-        .shadow(color: .black.opacity(0.05), radius: 20, x: 0, y: 10)
+        .glossyCard(cornerRadius: 20, borderTint: Color.red)
     }
     
     private func categoryCard(screenWidth: CGFloat) -> some View {
@@ -346,15 +328,7 @@ struct BPView: View {
         }
         .padding(screenWidth * 0.04)
         .frame(maxWidth: .infinity)
-        .background {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(0.03), radius: 8, x: 0, y: 4)
-        }
+        .glossyCard(cornerRadius: 16, borderTint: getBPStatusColor())
         .sheet(isPresented: $showBPCitation) {
             MedicalCitationView(
                 title: "Blood Pressure Categories",
@@ -413,15 +387,7 @@ struct BPView: View {
         }
         .padding(screenWidth * 0.04)
         .frame(maxWidth: .infinity, minHeight: screenWidth * 0.25)
-        .background {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.red.opacity(0.2), lineWidth: 1)
-                }
-        }
-        .shadow(color: .red.opacity(0.05), radius: 10, x: 0, y: 5)
+        .glossyCard(cornerRadius: 16, borderTint: Color.red)
     }
     
     // MARK: - Health Insights Section
@@ -493,16 +459,8 @@ struct BPView: View {
         }
         .padding(screenWidth * 0.04)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: screenWidth * 0.45)  // Increased size as requested
-        .background {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(suggestion.color.opacity(0.2), lineWidth: 1)
-                }
-        }
-        .shadow(color: suggestion.color.opacity(0.1), radius: 8, x: 0, y: 4)
+        .frame(minHeight: screenWidth * 0.45)
+        .glossyCard(cornerRadius: 16, borderTint: suggestion.color)
     }
     
     // MARK: - Loading Overlay

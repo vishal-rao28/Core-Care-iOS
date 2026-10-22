@@ -123,8 +123,8 @@ class UserManager: ObservableObject {
 // MARK: - LoginView
 
 struct LoginView: View {
-    @State private var emailOrPhone = "barani2504s@gmail.com"
-    @State private var password = "Ab@@1234"
+    @State private var emailOrPhone = ""
+    @State private var password = ""
     @State private var navigateTo: Destination? = nil
     @State private var warningMessage = ""
     @State private var isPasswordVisible = false
